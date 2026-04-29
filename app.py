@@ -6,11 +6,11 @@ import html
 import os
 import re
 import time
-from urllib.parse import urljoin, urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 13 - EXTRAER FOLIO DESDE LINK"
+VERSION = "VERSION 14 - CLICK CONTINUE REAL"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -35,7 +35,7 @@ def home():
 @app.post("/buscar", response_class=HTMLResponse)
 def buscar(direccion: str = Form(...)):
     try:
-        resultado, pdf_url = buscar_lee_y_crear_pdf(direccion)
+        resultado, pdf_url = buscar_lee(direccion)
 
         return f"""
         <h2>Resultado</h2>
@@ -49,7 +49,6 @@ def buscar(direccion: str = Form(...)):
         </p>
 
         <hr>
-
         <pre>{html.escape(resultado)}</pre>
 
         <br>
@@ -66,13 +65,11 @@ def buscar(direccion: str = Form(...)):
         """
 
 
-def limpiar_nombre(texto):
-    texto = texto.lower()
-    texto = re.sub(r"[^a-z0-9]+", "_", texto)
-    return texto[:60]
+def limpiar(texto):
+    return re.sub(r"[^a-z0-9]", "_", texto.lower())[:60]
 
 
-def buscar_lee_y_crear_pdf(direccion):
+def buscar_lee(direccion):
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -82,70 +79,75 @@ def buscar_lee_y_crear_pdf(direccion):
             args=["--disable-dev-shm-usage"]
         )
 
-        page = browser.new_page(viewport={"width": 1280, "height": 1700})
+        page = browser.new_page(viewport={"width": 1280, "height": 1800})
 
         # Buscar dirección
-        page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
+        page.goto("https://www.leepa.org/Search/PropertySearch.aspx")
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
-
         page.wait_for_selector(campo)
         page.fill(campo, direccion)
         page.press(campo, "Enter")
 
         page.wait_for_timeout(7000)
 
-        # 🔥 EXTRAER LINK REAL DE PARCEL DETAILS
-        parcel_link = page.evaluate("""
+        # Obtener link Parcel Details
+        link = page.evaluate("""
         () => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const link = links.find(a => a.innerText.includes('Parcel Details'));
-            return link ? link.href : null;
+            const a = Array.from(document.querySelectorAll('a'))
+            .find(x => x.innerText.includes('Parcel Details'));
+            return a ? a.href : null;
         }
         """)
 
-        if not parcel_link:
-            raise Exception("No encontré el link Parcel Details")
+        if not link:
+            raise Exception("No se encontró Parcel Details")
 
-        # 🔥 EXTRAER FOLIO ID DEL LINK
-        parsed = urlparse(parcel_link)
+        # Obtener folio
+        parsed = urlparse(link)
         params = parse_qs(parsed.query)
+        folio = params.get("FolioID", [""])[0]
 
-        if "FolioID" not in params:
-            raise Exception("No encontré FolioID en el link")
-
-        folio_id = params["FolioID"][0]
+        if not folio:
+            raise Exception("No se pudo extraer FolioID")
 
         # Ir directo al parcel
-        final_url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio_id}"
-        page.goto(final_url)
+        url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
+        page.goto(url)
 
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(4000)
 
-        # Aceptar Continue
+        # 🔥 CLICK CONTINUE (FORZADO)
         try:
-            page.evaluate("""
-            () => {
-                const btns = Array.from(document.querySelectorAll('button, input'));
-                const b = btns.find(x =>
-                    (x.innerText && x.innerText.toLowerCase().includes('continue')) ||
-                    (x.value && x.value.toLowerCase().includes('continue'))
-                );
-                if (b) b.click();
-            }
-            """)
+            page.locator("text=Continue").click(timeout=5000)
             page.wait_for_timeout(8000)
         except:
-            pass
+            try:
+                page.evaluate("""
+                () => {
+                    const btn = Array.from(document.querySelectorAll('*'))
+                    .find(el => el.innerText && el.innerText.includes('Continue'));
+                    if (btn) btn.click();
+                }
+                """)
+                page.wait_for_timeout(8000)
+            except:
+                pass
+
+        # Esperar contenido real
+        page.wait_for_timeout(5000)
 
         texto = page.locator("body").inner_text()
 
-        # Crear PDF
-        nombre = limpiar_nombre(direccion) + "_" + folio_id + "_" + str(int(time.time())) + ".pdf"
+        nombre = limpiar(direccion) + "_" + folio + "_" + str(int(time.time())) + ".pdf"
         ruta = os.path.join(DOWNLOAD_DIR, nombre)
 
-        page.pdf(path=ruta, format="Letter", print_background=True)
+        page.pdf(
+            path=ruta,
+            format="Letter",
+            print_background=True
+        )
 
         browser.close()
 
-        return f"FolioID: {folio_id}\nURL: {final_url}", f"/downloads/{nombre}"
+        return f"Folio: {folio}\nURL: {url}", f"/downloads/{nombre}"
