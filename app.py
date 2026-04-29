@@ -6,11 +6,10 @@ import html
 import os
 import re
 import time
-from urllib.parse import urljoin
 
 app = FastAPI()
 
-VERSION = "VERSION 11 - ACEPTAR CONTINUE Y PDF"
+VERSION = "VERSION 12 - PDF POR FOLIO ID"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -87,6 +86,7 @@ def buscar_lee_y_crear_pdf(direccion):
 
         page = browser.new_page(viewport={"width": 1280, "height": 1700})
 
+        # Buscar dirección
         page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
@@ -97,37 +97,41 @@ def buscar_lee_y_crear_pdf(direccion):
 
         page.wait_for_timeout(7000)
 
-        parcel_href = page.evaluate("""
-        () => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const link = links.find(a => a.innerText && a.innerText.trim().includes('Parcel Details'));
-            return link ? link.getAttribute('href') : null;
-        }
-        """)
+        texto_resultado = page.locator("body").inner_text(timeout=30000)
 
-        if not parcel_href:
-            raise Exception("No pude encontrar el link Parcel Details en la página de resultados.")
+        # Buscar Folio ID de 7 dígitos en los resultados
+        folios = re.findall(r"\b\d{7}\b", texto_resultado)
 
-        parcel_url = urljoin(page.url, parcel_href)
+        if not folios:
+            raise Exception("No pude encontrar el Folio ID en los resultados.")
+
+        folio_id = folios[0]
+
+        # Abrir directamente el Parcel Details correcto
+        parcel_url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio_id}"
         page.goto(parcel_url, timeout=60000)
 
         page.wait_for_timeout(5000)
 
-        # Aceptar cuadro de condiciones si aparece
+        # Aceptar Continue si aparece
         try:
-            continue_button = page.get_by_text("Continue", exact=True)
-            if continue_button.count() > 0:
-                continue_button.click(timeout=10000)
-                page.wait_for_timeout(6000)
+            page.evaluate("""
+            () => {
+                const buttons = Array.from(document.querySelectorAll('button, input, a'));
+                const btn = buttons.find(b =>
+                    (b.innerText && b.innerText.trim().toLowerCase() === 'continue') ||
+                    (b.value && b.value.trim().toLowerCase() === 'continue')
+                );
+                if (btn) btn.click();
+            }
+            """)
+            page.wait_for_timeout(8000)
         except:
             pass
 
-        # Esperar que cargue información real del parcel
-        page.wait_for_timeout(5000)
-
         texto = page.locator("body").inner_text(timeout=30000)
 
-        nombre_pdf = limpiar_nombre(direccion) + "_parcel_details_" + str(int(time.time())) + ".pdf"
+        nombre_pdf = limpiar_nombre(direccion) + "_folio_" + folio_id + "_" + str(int(time.time())) + ".pdf"
         ruta_pdf = os.path.join(DOWNLOAD_DIR, nombre_pdf)
 
         page.pdf(
@@ -149,8 +153,11 @@ def buscar_lee_y_crear_pdf(direccion):
         reporte = f"""
 PDF creado correctamente.
 
+Folio ID usado:
+{folio_id}
+
 Página usada para el PDF:
-{page.url}
+{parcel_url}
 
 Texto inicial:
 {texto[:3000]}
