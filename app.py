@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 23 - LEE + DEBUG COLLIER FRAMES"
+VERSION = "VERSION 24 - LEE + DEBUG COLLIER MAPS"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -36,33 +36,44 @@ def buscar(direccion: str = Form(...)):
     try:
         try:
             resultado, pdf_url = buscar_lee(direccion)
+
             return f"""
-            <h2>Resultado - Lee</h2>
+            <h2>Resultado - Lee County</h2>
             <p><b>{VERSION}</b></p>
             <p><b>Dirección:</b> {html.escape(direccion)}</p>
-            <p><a href="{pdf_url}" target="_blank" style="font-size:20px;">📄 Descargar PDF</a></p>
+
+            <p>
+                <a href="{pdf_url}" target="_blank" style="font-size:20px;">
+                    📄 Descargar PDF
+                </a>
+            </p>
+
             <hr>
             <pre>{html.escape(resultado)}</pre>
-            <br><a href="/">Volver</a>
+            <br>
+            <a href="/">Volver</a>
             """
-        except Exception:
-            pass
 
-        resultado = debug_collier(direccion)
+        except Exception as e:
+            resultado = debug_collier_maps(direccion)
 
-        return f"""
-        <h2>Debug Collier</h2>
-        <p><b>{VERSION}</b></p>
-        <p><b>Dirección:</b> {html.escape(direccion)}</p>
-        <hr>
-        <pre>{html.escape(resultado)}</pre>
-        <br><a href="/">Volver</a>
-        """
+            return f"""
+            <h2>Debug Collier Maps</h2>
+            <p><b>{VERSION}</b></p>
+            <p><b>Dirección:</b> {html.escape(direccion)}</p>
+
+            <hr>
+            <pre>{html.escape(resultado)}</pre>
+
+            <br>
+            <a href="/">Volver</a>
+            """
 
     except Exception:
         error = traceback.format_exc()
         return f"""
         <h2>Error interno</h2>
+        <p><b>{VERSION}</b></p>
         <pre>{html.escape(error)}</pre>
         <a href="/">Volver</a>
         """
@@ -96,7 +107,8 @@ def buscar_lee(direccion):
         () => {
             const links = Array.from(document.querySelectorAll('a'));
             const parcel = links.find(a =>
-                a.innerText && a.innerText.toLowerCase().includes('parcel details')
+                a.innerText &&
+                a.innerText.toLowerCase().includes('parcel details')
             );
             return parcel ? parcel.href : null;
         }
@@ -107,6 +119,9 @@ def buscar_lee(direccion):
 
         parsed = urlparse(link)
         folio = parse_qs(parsed.query).get("FolioID", [""])[0]
+
+        if not folio:
+            raise Exception("Lee encontró link, pero no FolioID")
 
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
         page.goto(url, timeout=60000)
@@ -129,7 +144,7 @@ def buscar_lee(direccion):
         return f"Lee OK\nFolio: {folio}\nURL: {url}", f"/downloads/{nombre}"
 
 
-def debug_collier(direccion):
+def debug_collier_maps(direccion):
     from playwright.sync_api import sync_playwright
 
     reporte = []
@@ -141,69 +156,67 @@ def debug_collier(direccion):
             args=["--disable-dev-shm-usage"]
         )
 
-        page = browser.new_page(viewport={"width": 1280, "height": 1200})
+        page = browser.new_page(viewport={"width": 1400, "height": 1200})
 
-        urls = [
-            "https://www.collierappraiser.com/Main_Search/search_rp.html",
-            "https://www.collierappraiser.com/",
-        ]
+        url = "https://maps.collierappraiser.com/"
+        page.goto(url, timeout=60000)
 
-        for url in urls:
-            reporte.append("=" * 80)
-            reporte.append(f"PROBANDO URL: {url}")
+        page.wait_for_timeout(12000)
 
-            try:
-                page.goto(url, timeout=60000, wait_until="networkidle")
-            except Exception as e:
-                reporte.append(f"Error cargando URL: {e}")
-                continue
+        reporte.append("=== COLLIER MAPS DEBUG ===")
+        reporte.append(f"URL inicial: {url}")
+        reporte.append(f"URL final: {page.url}")
+        reporte.append(f"Título: {page.title()}")
+        reporte.append("")
 
-            page.wait_for_timeout(8000)
-
-            reporte.append(f"TÍTULO: {page.title()}")
-            reporte.append(f"URL FINAL: {page.url}")
+        try:
+            texto = page.locator("body").inner_text(timeout=10000)
+            reporte.append("=== TEXTO DE LA PÁGINA ===")
+            reporte.append(texto[:4000])
+            reporte.append("")
+        except Exception as e:
+            reporte.append(f"No pude leer texto body: {e}")
             reporte.append("")
 
-            frames = page.frames
-            reporte.append(f"TOTAL FRAMES: {len(frames)}")
+        try:
+            elementos = page.evaluate("""
+            () => {
+                const els = Array.from(document.querySelectorAll('input, button, select, textarea, a'));
+                return els.map((el, i) => ({
+                    index: i,
+                    tag: el.tagName,
+                    type: el.getAttribute('type'),
+                    id: el.id,
+                    name: el.getAttribute('name'),
+                    placeholder: el.getAttribute('placeholder'),
+                    value: el.getAttribute('value'),
+                    text: el.innerText,
+                    aria: el.getAttribute('aria-label'),
+                    title: el.getAttribute('title'),
+                    visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+                }));
+            }
+            """)
+
+            reporte.append("=== ELEMENTOS DETECTADOS ===")
+            for e in elementos[:120]:
+                reporte.append(str(e))
+
+        except Exception as e:
+            reporte.append(f"No pude leer elementos: {e}")
+
+        try:
+            nombre = limpiar(direccion) + "_collier_debug_" + str(int(time.time())) + ".pdf"
+            ruta = os.path.join(DOWNLOAD_DIR, nombre)
+
+            page.pdf(path=ruta, format="Letter", print_background=True)
+
             reporte.append("")
+            reporte.append("=== PDF DEBUG CREADO ===")
+            reporte.append(f"/downloads/{nombre}")
 
-            for idx, frame in enumerate(frames):
-                reporte.append("-" * 60)
-                reporte.append(f"FRAME #{idx}")
-                reporte.append(f"URL FRAME: {frame.url}")
-
-                try:
-                    texto = frame.locator("body").inner_text(timeout=5000)
-                    reporte.append("TEXTO BODY:")
-                    reporte.append(texto[:1500])
-                except Exception as e:
-                    reporte.append(f"No pude leer texto del frame: {e}")
-
-                try:
-                    elementos = frame.evaluate("""
-                    () => {
-                        const els = Array.from(document.querySelectorAll('input, button, select, textarea, a'));
-                        return els.map((el, i) => ({
-                            index: i,
-                            tag: el.tagName,
-                            type: el.getAttribute('type'),
-                            id: el.id,
-                            name: el.getAttribute('name'),
-                            placeholder: el.getAttribute('placeholder'),
-                            value: el.getAttribute('value'),
-                            text: el.innerText,
-                            visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
-                        }));
-                    }
-                    """)
-
-                    reporte.append("ELEMENTOS:")
-                    for e in elementos[:80]:
-                        reporte.append(str(e))
-
-                except Exception as e:
-                    reporte.append(f"No pude leer elementos del frame: {e}")
+        except Exception as e:
+            reporte.append(f"No pude crear PDF debug: {e}")
 
         browser.close()
 
