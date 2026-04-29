@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 22 - LEE + COLLIER REAL FUNCIONANDO"
+VERSION = "VERSION 23 - LEE + DEBUG COLLIER FRAMES"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -34,33 +34,29 @@ def home():
 @app.post("/buscar", response_class=HTMLResponse)
 def buscar(direccion: str = Form(...)):
     try:
-        # 🔥 LEE PRIMERO
         try:
             resultado, pdf_url = buscar_lee(direccion)
-            condado = "Lee"
-        except:
-            # 🔥 SI FALLA → COLLIER
-            resultado, pdf_url = buscar_collier(direccion)
-            condado = "Collier"
+            return f"""
+            <h2>Resultado - Lee</h2>
+            <p><b>{VERSION}</b></p>
+            <p><b>Dirección:</b> {html.escape(direccion)}</p>
+            <p><a href="{pdf_url}" target="_blank" style="font-size:20px;">📄 Descargar PDF</a></p>
+            <hr>
+            <pre>{html.escape(resultado)}</pre>
+            <br><a href="/">Volver</a>
+            """
+        except Exception:
+            pass
+
+        resultado = debug_collier(direccion)
 
         return f"""
-        <h2>Resultado</h2>
+        <h2>Debug Collier</h2>
         <p><b>{VERSION}</b></p>
-
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
-        <p><b>Condado:</b> {condado}</p>
-
-        <p>
-            <a href="{pdf_url}" target="_blank" style="font-size:20px;">
-                📄 Descargar PDF
-            </a>
-        </p>
-
         <hr>
         <pre>{html.escape(resultado)}</pre>
-
-        <br>
-        <a href="/">Volver</a>
+        <br><a href="/">Volver</a>
         """
 
     except Exception:
@@ -76,18 +72,21 @@ def limpiar(texto):
     return re.sub(r"[^a-z0-9]", "_", texto.lower())[:60]
 
 
-# ===== LEE =====
 def buscar_lee(direccion):
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, chromium_sandbox=False)
-        page = browser.new_page()
+        browser = p.chromium.launch(
+            headless=True,
+            chromium_sandbox=False,
+            args=["--disable-dev-shm-usage"]
+        )
 
-        page.goto("https://www.leepa.org/Search/PropertySearch.aspx")
+        page = browser.new_page(viewport={"width": 1280, "height": 1800})
+        page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
-        page.wait_for_selector(campo)
+        page.wait_for_selector(campo, timeout=30000)
         page.fill(campo, direccion)
         page.press(campo, "Enter")
 
@@ -110,7 +109,7 @@ def buscar_lee(direccion):
         folio = parse_qs(parsed.query).get("FolioID", [""])[0]
 
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
-        page.goto(url)
+        page.goto(url, timeout=60000)
 
         page.wait_for_timeout(5000)
 
@@ -127,35 +126,85 @@ def buscar_lee(direccion):
 
         browser.close()
 
-        return f"Lee OK\nFolio: {folio}", f"/downloads/{nombre}"
+        return f"Lee OK\nFolio: {folio}\nURL: {url}", f"/downloads/{nombre}"
 
 
-# ===== COLLIER REAL =====
-def buscar_collier(direccion):
+def debug_collier(direccion):
     from playwright.sync_api import sync_playwright
 
+    reporte = []
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, chromium_sandbox=False)
-        page = browser.new_page()
+        browser = p.chromium.launch(
+            headless=True,
+            chromium_sandbox=False,
+            args=["--disable-dev-shm-usage"]
+        )
 
-        page.goto("https://www.collierappraiser.com/Main_Search/search_rp.html")
+        page = browser.new_page(viewport={"width": 1280, "height": 1200})
 
-        page.wait_for_timeout(5000)
+        urls = [
+            "https://www.collierappraiser.com/Main_Search/search_rp.html",
+            "https://www.collierappraiser.com/",
+        ]
 
-        # 🔥 Campo correcto (Site Address)
-        page.fill("input[type='text']", direccion)
+        for url in urls:
+            reporte.append("=" * 80)
+            reporte.append(f"PROBANDO URL: {url}")
 
-        # 🔥 Click botón Search
-        page.click("button:has-text('Search')")
+            try:
+                page.goto(url, timeout=60000, wait_until="networkidle")
+            except Exception as e:
+                reporte.append(f"Error cargando URL: {e}")
+                continue
 
-        page.wait_for_timeout(8000)
+            page.wait_for_timeout(8000)
 
-        # PDF de resultados
-        nombre = limpiar(direccion) + "_collier_" + str(int(time.time())) + ".pdf"
-        ruta = os.path.join(DOWNLOAD_DIR, nombre)
+            reporte.append(f"TÍTULO: {page.title()}")
+            reporte.append(f"URL FINAL: {page.url}")
+            reporte.append("")
 
-        page.pdf(path=ruta, format="Letter", print_background=True)
+            frames = page.frames
+            reporte.append(f"TOTAL FRAMES: {len(frames)}")
+            reporte.append("")
+
+            for idx, frame in enumerate(frames):
+                reporte.append("-" * 60)
+                reporte.append(f"FRAME #{idx}")
+                reporte.append(f"URL FRAME: {frame.url}")
+
+                try:
+                    texto = frame.locator("body").inner_text(timeout=5000)
+                    reporte.append("TEXTO BODY:")
+                    reporte.append(texto[:1500])
+                except Exception as e:
+                    reporte.append(f"No pude leer texto del frame: {e}")
+
+                try:
+                    elementos = frame.evaluate("""
+                    () => {
+                        const els = Array.from(document.querySelectorAll('input, button, select, textarea, a'));
+                        return els.map((el, i) => ({
+                            index: i,
+                            tag: el.tagName,
+                            type: el.getAttribute('type'),
+                            id: el.id,
+                            name: el.getAttribute('name'),
+                            placeholder: el.getAttribute('placeholder'),
+                            value: el.getAttribute('value'),
+                            text: el.innerText,
+                            visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+                        }));
+                    }
+                    """)
+
+                    reporte.append("ELEMENTOS:")
+                    for e in elementos[:80]:
+                        reporte.append(str(e))
+
+                except Exception as e:
+                    reporte.append(f"No pude leer elementos del frame: {e}")
 
         browser.close()
 
-        return "Collier OK", f"/downloads/{nombre}"
+    return "\n".join(reporte)
