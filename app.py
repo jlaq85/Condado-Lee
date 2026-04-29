@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 20 - LEE + DEBUG COLLIER"
+VERSION = "VERSION 22 - LEE + COLLIER REAL FUNCIONANDO"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -34,38 +34,27 @@ def home():
 @app.post("/buscar", response_class=HTMLResponse)
 def buscar(direccion: str = Form(...)):
     try:
-        # 🔥 INTENTAR LEE
+        # 🔥 LEE PRIMERO
         try:
             resultado, pdf_url = buscar_lee(direccion)
-            return f"""
-            <h2>Resultado - Lee County</h2>
-            <p><b>{VERSION}</b></p>
-
-            <p><b>Dirección:</b> {html.escape(direccion)}</p>
-
-            <p>
-                <a href="{pdf_url}" target="_blank" style="font-size:20px;">
-                    📄 Descargar PDF
-                </a>
-            </p>
-
-            <hr>
-            <pre>{html.escape(resultado)}</pre>
-
-            <br>
-            <a href="/">Volver</a>
-            """
+            condado = "Lee"
         except:
-            pass
-
-        # 🔥 SI FALLA LEE → DEBUG COLLIER
-        resultado = debug_collier(direccion)
+            # 🔥 SI FALLA → COLLIER
+            resultado, pdf_url = buscar_collier(direccion)
+            condado = "Collier"
 
         return f"""
-        <h2>Debug Collier County</h2>
+        <h2>Resultado</h2>
         <p><b>{VERSION}</b></p>
 
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
+        <p><b>Condado:</b> {condado}</p>
+
+        <p>
+            <a href="{pdf_url}" target="_blank" style="font-size:20px;">
+                📄 Descargar PDF
+            </a>
+        </p>
 
         <hr>
         <pre>{html.escape(resultado)}</pre>
@@ -87,23 +76,18 @@ def limpiar(texto):
     return re.sub(r"[^a-z0-9]", "_", texto.lower())[:60]
 
 
-# 🔥 LEE (YA FUNCIONANDO)
+# ===== LEE =====
 def buscar_lee(direccion):
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            chromium_sandbox=False,
-            args=["--disable-dev-shm-usage"]
-        )
+        browser = p.chromium.launch(headless=True, chromium_sandbox=False)
+        page = browser.new_page()
 
-        page = browser.new_page(viewport={"width": 1280, "height": 1800})
-        page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
+        page.goto("https://www.leepa.org/Search/PropertySearch.aspx")
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
-
-        page.wait_for_selector(campo, timeout=30000)
+        page.wait_for_selector(campo)
         page.fill(campo, direccion)
         page.press(campo, "Enter")
 
@@ -113,8 +97,7 @@ def buscar_lee(direccion):
         () => {
             const links = Array.from(document.querySelectorAll('a'));
             const parcel = links.find(a =>
-                a.innerText &&
-                a.innerText.toLowerCase().includes('parcel details')
+                a.innerText && a.innerText.toLowerCase().includes('parcel details')
             );
             return parcel ? parcel.href : null;
         }
@@ -124,8 +107,7 @@ def buscar_lee(direccion):
             raise Exception("Lee no encontró resultados")
 
         parsed = urlparse(link)
-        params = parse_qs(parsed.query)
-        folio = params.get("FolioID", [""])[0]
+        folio = parse_qs(parsed.query).get("FolioID", [""])[0]
 
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
         page.goto(url)
@@ -145,45 +127,35 @@ def buscar_lee(direccion):
 
         browser.close()
 
-        return f"Folio: {folio}\nURL: {url}", f"/downloads/{nombre}"
+        return f"Lee OK\nFolio: {folio}", f"/downloads/{nombre}"
 
 
-# 🔥 DEBUG COLLIER
-def debug_collier(direccion):
+# ===== COLLIER REAL =====
+def buscar_collier(direccion):
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            chromium_sandbox=False,
-            args=["--disable-dev-shm-usage"]
-        )
-
+        browser = p.chromium.launch(headless=True, chromium_sandbox=False)
         page = browser.new_page()
-        page.goto("https://www.collierappraiser.com/", timeout=60000)
+
+        page.goto("https://www.collierappraiser.com/Main_Search/search_rp.html")
+
+        page.wait_for_timeout(5000)
+
+        # 🔥 Campo correcto (Site Address)
+        page.fill("input[type='text']", direccion)
+
+        # 🔥 Click botón Search
+        page.click("button:has-text('Search')")
 
         page.wait_for_timeout(8000)
 
-        # 🔍 Extraer TODOS los inputs y botones
-        elementos = page.evaluate("""
-        () => {
-            const items = Array.from(document.querySelectorAll('input, button, select, textarea'));
-            return items.map(el => ({
-                tag: el.tagName,
-                type: el.getAttribute('type'),
-                id: el.id,
-                name: el.name,
-                placeholder: el.placeholder,
-                value: el.value
-            }));
-        }
-        """)
+        # PDF de resultados
+        nombre = limpiar(direccion) + "_collier_" + str(int(time.time())) + ".pdf"
+        ruta = os.path.join(DOWNLOAD_DIR, nombre)
+
+        page.pdf(path=ruta, format="Letter", print_background=True)
 
         browser.close()
 
-        reporte = "=== ELEMENTOS DETECTADOS EN COLLIER ===\\n\\n"
-
-        for e in elementos:
-            reporte += str(e) + "\\n"
-
-        return reporte
+        return "Collier OK", f"/downloads/{nombre}"
