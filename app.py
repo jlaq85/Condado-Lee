@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import traceback
 import html
@@ -9,7 +9,7 @@ import time
 
 app = FastAPI()
 
-VERSION = "VERSION 8 - PDF DEL PARCEL"
+VERSION = "VERSION 9 - PDF PARCEL DETAILS"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -43,7 +43,7 @@ def buscar(direccion: str = Form(...)):
 
         <p>
             <a href="{pdf_url}" target="_blank" style="font-size:20px;">
-                📄 Abrir / Descargar PDF
+                📄 Abrir / Descargar PDF del Parcel Details
             </a>
         </p>
 
@@ -84,7 +84,7 @@ def buscar_lee_y_crear_pdf(direccion):
             args=["--disable-dev-shm-usage"]
         )
 
-        page = browser.new_page(viewport={"width": 1280, "height": 1600})
+        page = browser.new_page(viewport={"width": 1280, "height": 1700})
 
         page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
 
@@ -96,38 +96,16 @@ def buscar_lee_y_crear_pdf(direccion):
 
         page.wait_for_timeout(7000)
 
-        # Click en primer link de parcel/resultados
-        links = page.locator("a")
-        total_links = links.count()
+        # Click en el link correcto: Parcel Details
+        page.get_by_text("Parcel Details", exact=True).click(timeout=30000)
 
-        click_hecho = False
+        page.wait_for_timeout(8000)
 
-        for i in range(total_links):
-            try:
-                href = links.nth(i).get_attribute("href")
-                texto_link = links.nth(i).inner_text(timeout=2000)
-
-                if href and ("DisplayParcel" in href or "FolioID" in href):
-                    links.nth(i).click()
-                    click_hecho = True
-                    break
-            except:
-                pass
-
-        if not click_hecho:
-            # Si ya entró directo al parcel, continúa
-            if "DisplayParcel" not in page.url:
-                raise Exception("No pude encontrar el link del parcel en los resultados.")
-
-        page.wait_for_timeout(7000)
-
-        # Esperar que cargue la página del parcel
         texto = page.locator("body").inner_text(timeout=30000)
 
-        nombre_pdf = limpiar_nombre(direccion) + "_" + str(int(time.time())) + ".pdf"
+        nombre_pdf = limpiar_nombre(direccion) + "_parcel_details_" + str(int(time.time())) + ".pdf"
         ruta_pdf = os.path.join(DOWNLOAD_DIR, nombre_pdf)
 
-        # Crear PDF de la página completa
         page.pdf(
             path=ruta_pdf,
             format="Letter",
