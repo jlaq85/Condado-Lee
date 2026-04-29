@@ -6,10 +6,11 @@ import html
 import os
 import re
 import time
+from urllib.parse import urljoin, urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 12 - PDF POR FOLIO ID"
+VERSION = "VERSION 13 - EXTRAER FOLIO DESDE LINK"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -43,15 +44,13 @@ def buscar(direccion: str = Form(...)):
 
         <p>
             <a href="{pdf_url}" target="_blank" style="font-size:20px;">
-                📄 Abrir / Descargar PDF del Parcel Details
+                📄 Descargar PDF
             </a>
         </p>
 
         <hr>
 
-        <div style="white-space: pre-wrap; font-family: monospace; font-size: 13px;">
-        {html.escape(resultado)}
-        </div>
+        <pre>{html.escape(resultado)}</pre>
 
         <br>
         <a href="/">Volver</a>
@@ -70,7 +69,6 @@ def buscar(direccion: str = Form(...)):
 def limpiar_nombre(texto):
     texto = texto.lower()
     texto = re.sub(r"[^a-z0-9]+", "_", texto)
-    texto = texto.strip("_")
     return texto[:60]
 
 
@@ -91,76 +89,63 @@ def buscar_lee_y_crear_pdf(direccion):
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
 
-        page.wait_for_selector(campo, timeout=30000)
+        page.wait_for_selector(campo)
         page.fill(campo, direccion)
         page.press(campo, "Enter")
 
         page.wait_for_timeout(7000)
 
-        texto_resultado = page.locator("body").inner_text(timeout=30000)
+        # 🔥 EXTRAER LINK REAL DE PARCEL DETAILS
+        parcel_link = page.evaluate("""
+        () => {
+            const links = Array.from(document.querySelectorAll('a'));
+            const link = links.find(a => a.innerText.includes('Parcel Details'));
+            return link ? link.href : null;
+        }
+        """)
 
-        # Buscar Folio ID de 7 dígitos en los resultados
-        folios = re.findall(r"\b\d{7}\b", texto_resultado)
+        if not parcel_link:
+            raise Exception("No encontré el link Parcel Details")
 
-        if not folios:
-            raise Exception("No pude encontrar el Folio ID en los resultados.")
+        # 🔥 EXTRAER FOLIO ID DEL LINK
+        parsed = urlparse(parcel_link)
+        params = parse_qs(parsed.query)
 
-        folio_id = folios[0]
+        if "FolioID" not in params:
+            raise Exception("No encontré FolioID en el link")
 
-        # Abrir directamente el Parcel Details correcto
-        parcel_url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio_id}"
-        page.goto(parcel_url, timeout=60000)
+        folio_id = params["FolioID"][0]
+
+        # Ir directo al parcel
+        final_url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio_id}"
+        page.goto(final_url)
 
         page.wait_for_timeout(5000)
 
-        # Aceptar Continue si aparece
+        # Aceptar Continue
         try:
             page.evaluate("""
             () => {
-                const buttons = Array.from(document.querySelectorAll('button, input, a'));
-                const btn = buttons.find(b =>
-                    (b.innerText && b.innerText.trim().toLowerCase() === 'continue') ||
-                    (b.value && b.value.trim().toLowerCase() === 'continue')
+                const btns = Array.from(document.querySelectorAll('button, input'));
+                const b = btns.find(x =>
+                    (x.innerText && x.innerText.toLowerCase().includes('continue')) ||
+                    (x.value && x.value.toLowerCase().includes('continue'))
                 );
-                if (btn) btn.click();
+                if (b) b.click();
             }
             """)
             page.wait_for_timeout(8000)
         except:
             pass
 
-        texto = page.locator("body").inner_text(timeout=30000)
+        texto = page.locator("body").inner_text()
 
-        nombre_pdf = limpiar_nombre(direccion) + "_folio_" + folio_id + "_" + str(int(time.time())) + ".pdf"
-        ruta_pdf = os.path.join(DOWNLOAD_DIR, nombre_pdf)
+        # Crear PDF
+        nombre = limpiar_nombre(direccion) + "_" + folio_id + "_" + str(int(time.time())) + ".pdf"
+        ruta = os.path.join(DOWNLOAD_DIR, nombre)
 
-        page.pdf(
-            path=ruta_pdf,
-            format="Letter",
-            print_background=True,
-            margin={
-                "top": "0.20in",
-                "right": "0.20in",
-                "bottom": "0.20in",
-                "left": "0.20in"
-            }
-        )
+        page.pdf(path=ruta, format="Letter", print_background=True)
 
         browser.close()
 
-        pdf_url = f"/downloads/{nombre_pdf}"
-
-        reporte = f"""
-PDF creado correctamente.
-
-Folio ID usado:
-{folio_id}
-
-Página usada para el PDF:
-{parcel_url}
-
-Texto inicial:
-{texto[:3000]}
-"""
-
-        return reporte, pdf_url
+        return f"FolioID: {folio_id}\nURL: {final_url}", f"/downloads/{nombre}"
