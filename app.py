@@ -10,11 +10,10 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 17 - CLICK SEARCH REAL (FIX)"
+VERSION = "VERSION 18 - LEE FUNCIONANDO + AUTO SIMPLE"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
 app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 
 
@@ -23,10 +22,9 @@ def home():
     return f"""
     <h2>Buscar propiedad automático</h2>
     <p><b>{VERSION}</b></p>
-
     <form method="post" action="/buscar">
         Dirección:<br>
-        <input name="direccion" style="width:400px"><br><br>
+        <input name="direccion" style="width:420px"><br><br>
         <button type="submit">Buscar y crear PDF</button>
     </form>
     """
@@ -50,7 +48,6 @@ def buscar(direccion: str = Form(...)):
 
         <hr>
         <pre>{html.escape(resultado)}</pre>
-
         <br>
         <a href="/">Volver</a>
         """
@@ -80,51 +77,42 @@ def buscar_lee(direccion):
         )
 
         page = browser.new_page(viewport={"width": 1280, "height": 1800})
-
-        page.goto("https://www.leepa.org/Search/PropertySearch.aspx")
+        page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
-        boton = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_btnSearch"
 
-        page.wait_for_selector(campo)
+        page.wait_for_selector(campo, timeout=30000)
         page.fill(campo, direccion)
 
-        # 🔥 CLICK REAL EN SEARCH (ESTO ES LA CLAVE)
-        page.click(boton)
+        # Método que ya funcionó antes
+        page.press(campo, "Enter")
+        page.wait_for_timeout(9000)
 
-        # Esperar resultados (tabla)
-        page.wait_for_timeout(8000)
-
-        # Confirmar que salieron resultados
-        contenido = page.locator("body").inner_text()
-
-        if "found" not in contenido.lower():
-            raise Exception("No aparecieron resultados. Revisa dirección o espera.")
-
-        # Obtener link Parcel Details
+        # Buscar link Parcel Details
         link = page.evaluate("""
         () => {
             const links = Array.from(document.querySelectorAll('a'));
-            const a = links.find(x =>
-                x.innerText &&
-                x.innerText.toLowerCase().includes('parcel details')
+            const parcel = links.find(a =>
+                a.innerText &&
+                a.innerText.toLowerCase().includes('parcel details')
             );
-            return a ? a.href : null;
+            return parcel ? parcel.href : null;
         }
         """)
 
         if not link:
-            raise Exception("No se encontró Parcel Details después de buscar.")
+            texto = page.locator("body").inner_text(timeout=30000)
+            raise Exception("No se encontró Parcel Details. Texto de la página:\\n\\n" + texto[:2500])
 
         parsed = urlparse(link)
         params = parse_qs(parsed.query)
         folio = params.get("FolioID", [""])[0]
 
         if not folio:
-            raise Exception("No se pudo extraer FolioID del link.")
+            raise Exception("No se pudo extraer FolioID del link: " + link)
 
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
-        page.goto(url)
+        page.goto(url, timeout=60000)
 
         page.wait_for_timeout(5000)
 
@@ -137,8 +125,6 @@ def buscar_lee(direccion):
 
         page.wait_for_timeout(5000)
 
-        texto = page.locator("body").inner_text()
-
         nombre = limpiar(direccion) + "_" + folio + "_" + str(int(time.time())) + ".pdf"
         ruta = os.path.join(DOWNLOAD_DIR, nombre)
 
@@ -150,4 +136,4 @@ def buscar_lee(direccion):
 
         browser.close()
 
-        return f"Folio: {folio}\nURL: {url}", f"/downloads/{nombre}"
+        return f"Condado usado: Lee County\nFolio: {folio}\nURL: {url}", f"/downloads/{nombre}"
