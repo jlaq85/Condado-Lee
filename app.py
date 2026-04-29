@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 14 - CLICK CONTINUE REAL"
+VERSION = "VERSION 15 - AUTO CONDADO"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -21,13 +21,13 @@ app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 @app.get("/", response_class=HTMLResponse)
 def home():
     return f"""
-    <h2>Buscar propiedad y crear PDF</h2>
+    <h2>Buscar propiedad automático</h2>
     <p><b>{VERSION}</b></p>
 
     <form method="post" action="/buscar">
         Dirección:<br>
         <input name="direccion" style="width:350px"><br><br>
-        <button type="submit">Buscar y crear PDF</button>
+        <button type="submit">Buscar</button>
     </form>
     """
 
@@ -35,12 +35,23 @@ def home():
 @app.post("/buscar", response_class=HTMLResponse)
 def buscar(direccion: str = Form(...)):
     try:
-        resultado, pdf_url = buscar_lee(direccion)
+        condado = detectar_condado(direccion)
+
+        if condado == "lee":
+            resultado, pdf_url = buscar_lee(direccion)
+        else:
+            return f"""
+            <h2>Condado no implementado</h2>
+            <p>Detectado: {condado}</p>
+            <a href="/">Volver</a>
+            """
 
         return f"""
         <h2>Resultado</h2>
         <p><b>{VERSION}</b></p>
+
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
+        <p><b>Condado detectado:</b> {condado.upper()}</p>
 
         <p>
             <a href="{pdf_url}" target="_blank" style="font-size:20px;">
@@ -59,10 +70,32 @@ def buscar(direccion: str = Form(...)):
         error = traceback.format_exc()
         return f"""
         <h2>Error interno</h2>
-        <p><b>{VERSION}</b></p>
         <pre>{html.escape(error)}</pre>
         <a href="/">Volver</a>
         """
+
+
+# 🔥 DETECTAR CONDADO (VERSIÓN SIMPLE)
+def detectar_condado(direccion):
+    d = direccion.lower()
+
+    if any(x in d for x in [
+        "cape coral", "fort myers", "lehigh", "bonita springs",
+        "estero", "sanibel", "pine island"
+    ]):
+        return "lee"
+
+    if any(x in d for x in [
+        "naples", "marco island", "immokalee"
+    ]):
+        return "collier"
+
+    if any(x in d for x in [
+        "labelle", "clewiston"
+    ]):
+        return "hendry"
+
+    return "desconocido"
 
 
 def limpiar(texto):
@@ -81,7 +114,6 @@ def buscar_lee(direccion):
 
         page = browser.new_page(viewport={"width": 1280, "height": 1800})
 
-        # Buscar dirección
         page.goto("https://www.leepa.org/Search/PropertySearch.aspx")
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
@@ -91,7 +123,6 @@ def buscar_lee(direccion):
 
         page.wait_for_timeout(7000)
 
-        # Obtener link Parcel Details
         link = page.evaluate("""
         () => {
             const a = Array.from(document.querySelectorAll('a'))
@@ -103,7 +134,6 @@ def buscar_lee(direccion):
         if not link:
             raise Exception("No se encontró Parcel Details")
 
-        # Obtener folio
         parsed = urlparse(link)
         params = parse_qs(parsed.query)
         folio = params.get("FolioID", [""])[0]
@@ -111,42 +141,24 @@ def buscar_lee(direccion):
         if not folio:
             raise Exception("No se pudo extraer FolioID")
 
-        # Ir directo al parcel
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
         page.goto(url)
 
         page.wait_for_timeout(4000)
 
-        # 🔥 CLICK CONTINUE (FORZADO)
+        # Click Continue
         try:
             page.locator("text=Continue").click(timeout=5000)
             page.wait_for_timeout(8000)
         except:
-            try:
-                page.evaluate("""
-                () => {
-                    const btn = Array.from(document.querySelectorAll('*'))
-                    .find(el => el.innerText && el.innerText.includes('Continue'));
-                    if (btn) btn.click();
-                }
-                """)
-                page.wait_for_timeout(8000)
-            except:
-                pass
-
-        # Esperar contenido real
-        page.wait_for_timeout(5000)
+            pass
 
         texto = page.locator("body").inner_text()
 
         nombre = limpiar(direccion) + "_" + folio + "_" + str(int(time.time())) + ".pdf"
         ruta = os.path.join(DOWNLOAD_DIR, nombre)
 
-        page.pdf(
-            path=ruta,
-            format="Letter",
-            print_background=True
-        )
+        page.pdf(path=ruta, format="Letter", print_background=True)
 
         browser.close()
 
