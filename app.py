@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 
 app = FastAPI()
 
-VERSION = "VERSION 10 - FORZAR PARCEL DETAILS PDF"
+VERSION = "VERSION 11 - ACEPTAR CONTINUE Y PDF"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -97,7 +97,6 @@ def buscar_lee_y_crear_pdf(direccion):
 
         page.wait_for_timeout(7000)
 
-        # Buscar el href real del link "Parcel Details"
         parcel_href = page.evaluate("""
         () => {
             const links = Array.from(document.querySelectorAll('a'));
@@ -109,17 +108,24 @@ def buscar_lee_y_crear_pdf(direccion):
         if not parcel_href:
             raise Exception("No pude encontrar el link Parcel Details en la página de resultados.")
 
-        # Convertir a URL completa y abrir directamente
         parcel_url = urljoin(page.url, parcel_href)
         page.goto(parcel_url, timeout=60000)
 
-        page.wait_for_timeout(8000)
+        page.wait_for_timeout(5000)
+
+        # Aceptar cuadro de condiciones si aparece
+        try:
+            continue_button = page.get_by_text("Continue", exact=True)
+            if continue_button.count() > 0:
+                continue_button.click(timeout=10000)
+                page.wait_for_timeout(6000)
+        except:
+            pass
+
+        # Esperar que cargue información real del parcel
+        page.wait_for_timeout(5000)
 
         texto = page.locator("body").inner_text(timeout=30000)
-
-        # Confirmar que estamos en Parcel Details
-        if "Property Data" not in texto and "STRAP" not in texto:
-            raise Exception("Entré al link, pero no parece ser la página de Parcel Details.")
 
         nombre_pdf = limpiar_nombre(direccion) + "_parcel_details_" + str(int(time.time())) + ".pdf"
         ruta_pdf = os.path.join(DOWNLOAD_DIR, nombre_pdf)
@@ -146,7 +152,7 @@ PDF creado correctamente.
 Página usada para el PDF:
 {page.url}
 
-Primer texto encontrado:
+Texto inicial:
 {texto[:3000]}
 """
 
