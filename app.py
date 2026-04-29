@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 19 - AUTO CONDADO BASE (LEE + FALLBACK)"
+VERSION = "VERSION 20 - LEE + DEBUG COLLIER"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -22,10 +22,11 @@ def home():
     return f"""
     <h2>Buscar propiedad automático</h2>
     <p><b>{VERSION}</b></p>
+
     <form method="post" action="/buscar">
         Dirección:<br>
         <input name="direccion" style="width:420px"><br><br>
-        <button type="submit">Buscar y crear PDF</button>
+        <button type="submit">Buscar</button>
     </form>
     """
 
@@ -36,35 +37,35 @@ def buscar(direccion: str = Form(...)):
         # 🔥 INTENTAR LEE
         try:
             resultado, pdf_url = buscar_lee(direccion)
-            condado = "Lee"
-        except Exception as e:
-            # 👉 NO ROMPE, SOLO GUARDA ERROR
-            error_lee = str(e)
             return f"""
-            <h2>No se encontró en Lee County</h2>
+            <h2>Resultado - Lee County</h2>
+            <p><b>{VERSION}</b></p>
 
             <p><b>Dirección:</b> {html.escape(direccion)}</p>
 
-            <p>Lee respondió:</p>
-            <pre>{html.escape(error_lee)}</pre>
+            <p>
+                <a href="{pdf_url}" target="_blank" style="font-size:20px;">
+                    📄 Descargar PDF
+                </a>
+            </p>
 
-            <p>👉 Próximo paso: agregar Collier y Hendry</p>
+            <hr>
+            <pre>{html.escape(resultado)}</pre>
 
+            <br>
             <a href="/">Volver</a>
             """
+        except:
+            pass
+
+        # 🔥 SI FALLA LEE → DEBUG COLLIER
+        resultado = debug_collier(direccion)
 
         return f"""
-        <h2>Resultado</h2>
+        <h2>Debug Collier County</h2>
         <p><b>{VERSION}</b></p>
 
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
-        <p><b>Condado usado:</b> {condado}</p>
-
-        <p>
-            <a href="{pdf_url}" target="_blank" style="font-size:20px;">
-                📄 Descargar PDF
-            </a>
-        </p>
 
         <hr>
         <pre>{html.escape(resultado)}</pre>
@@ -86,6 +87,7 @@ def limpiar(texto):
     return re.sub(r"[^a-z0-9]", "_", texto.lower())[:60]
 
 
+# 🔥 LEE (YA FUNCIONANDO)
 def buscar_lee(direccion):
     from playwright.sync_api import sync_playwright
 
@@ -119,18 +121,14 @@ def buscar_lee(direccion):
         """)
 
         if not link:
-            texto = page.locator("body").inner_text(timeout=30000)
-            raise Exception("No se encontró Parcel Details.")
+            raise Exception("Lee no encontró resultados")
 
         parsed = urlparse(link)
         params = parse_qs(parsed.query)
         folio = params.get("FolioID", [""])[0]
 
-        if not folio:
-            raise Exception("No se pudo extraer FolioID.")
-
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
-        page.goto(url, timeout=60000)
+        page.goto(url)
 
         page.wait_for_timeout(5000)
 
@@ -140,17 +138,52 @@ def buscar_lee(direccion):
         except:
             pass
 
-        page.wait_for_timeout(5000)
-
         nombre = limpiar(direccion) + "_" + folio + "_" + str(int(time.time())) + ".pdf"
         ruta = os.path.join(DOWNLOAD_DIR, nombre)
 
-        page.pdf(
-            path=ruta,
-            format="Letter",
-            print_background=True
-        )
+        page.pdf(path=ruta, format="Letter", print_background=True)
 
         browser.close()
 
-        return f"Condado: Lee\nFolio: {folio}\nURL: {url}", f"/downloads/{nombre}"
+        return f"Folio: {folio}\nURL: {url}", f"/downloads/{nombre}"
+
+
+# 🔥 DEBUG COLLIER
+def debug_collier(direccion):
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            chromium_sandbox=False,
+            args=["--disable-dev-shm-usage"]
+        )
+
+        page = browser.new_page()
+        page.goto("https://www.collierappraiser.com/", timeout=60000)
+
+        page.wait_for_timeout(8000)
+
+        # 🔍 Extraer TODOS los inputs y botones
+        elementos = page.evaluate("""
+        () => {
+            const items = Array.from(document.querySelectorAll('input, button, select, textarea'));
+            return items.map(el => ({
+                tag: el.tagName,
+                type: el.getAttribute('type'),
+                id: el.id,
+                name: el.name,
+                placeholder: el.placeholder,
+                value: el.value
+            }));
+        }
+        """)
+
+        browser.close()
+
+        reporte = "=== ELEMENTOS DETECTADOS EN COLLIER ===\\n\\n"
+
+        for e in elementos:
+            reporte += str(e) + "\\n"
+
+        return reporte
