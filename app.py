@@ -6,10 +6,11 @@ import html
 import os
 import re
 import time
+from urllib.parse import urljoin
 
 app = FastAPI()
 
-VERSION = "VERSION 9 - PDF PARCEL DETAILS"
+VERSION = "VERSION 10 - FORZAR PARCEL DETAILS PDF"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -96,12 +97,29 @@ def buscar_lee_y_crear_pdf(direccion):
 
         page.wait_for_timeout(7000)
 
-        # Click en el link correcto: Parcel Details
-        page.get_by_text("Parcel Details", exact=True).click(timeout=30000)
+        # Buscar el href real del link "Parcel Details"
+        parcel_href = page.evaluate("""
+        () => {
+            const links = Array.from(document.querySelectorAll('a'));
+            const link = links.find(a => a.innerText && a.innerText.trim().includes('Parcel Details'));
+            return link ? link.getAttribute('href') : null;
+        }
+        """)
+
+        if not parcel_href:
+            raise Exception("No pude encontrar el link Parcel Details en la página de resultados.")
+
+        # Convertir a URL completa y abrir directamente
+        parcel_url = urljoin(page.url, parcel_href)
+        page.goto(parcel_url, timeout=60000)
 
         page.wait_for_timeout(8000)
 
         texto = page.locator("body").inner_text(timeout=30000)
+
+        # Confirmar que estamos en Parcel Details
+        if "Property Data" not in texto and "STRAP" not in texto:
+            raise Exception("Entré al link, pero no parece ser la página de Parcel Details.")
 
         nombre_pdf = limpiar_nombre(direccion) + "_parcel_details_" + str(int(time.time())) + ".pdf"
         ruta_pdf = os.path.join(DOWNLOAD_DIR, nombre_pdf)
@@ -111,10 +129,10 @@ def buscar_lee_y_crear_pdf(direccion):
             format="Letter",
             print_background=True,
             margin={
-                "top": "0.25in",
-                "right": "0.25in",
-                "bottom": "0.25in",
-                "left": "0.25in"
+                "top": "0.20in",
+                "right": "0.20in",
+                "bottom": "0.20in",
+                "left": "0.20in"
             }
         )
 
@@ -122,4 +140,14 @@ def buscar_lee_y_crear_pdf(direccion):
 
         pdf_url = f"/downloads/{nombre_pdf}"
 
-        return texto[:5000], pdf_url
+        reporte = f"""
+PDF creado correctamente.
+
+Página usada para el PDF:
+{page.url}
+
+Primer texto encontrado:
+{texto[:3000]}
+"""
+
+        return reporte, pdf_url
