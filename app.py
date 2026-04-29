@@ -5,7 +5,7 @@ import html
 
 app = FastAPI()
 
-VERSION = "VERSION 5 - BUSQUEDA REAL"
+VERSION = "VERSION 6 - BUSQUEDA CON ENTER"
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -59,21 +59,18 @@ def buscar_lee(direccion):
         page = browser.new_page()
         page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
 
-        # Esperar campo correcto
-        page.wait_for_selector("#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox")
+        campo_direccion = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
 
-        # Escribir dirección
-        page.fill("#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox", direccion)
+        page.wait_for_selector(campo_direccion, timeout=30000)
+        page.fill(campo_direccion, direccion)
 
-        # Click botón Search
-        page.click("#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_btnSearch")
+        # En vez de buscar el botón, presionamos ENTER dentro del campo
+        page.press(campo_direccion, "Enter")
 
-        # Esperar resultados
-        page.wait_for_timeout(6000)
+        page.wait_for_timeout(8000)
 
-        # Obtener texto visible
-        texto = page.locator("body").inner_text()
+        texto = page.locator("body").inner_text(timeout=30000)
 
         browser.close()
 
-        return texto[:5000]
+        return texto[:8000]
