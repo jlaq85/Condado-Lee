@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 26 - LEE + DEBUG CHARLOTTE"
+VERSION = "VERSION 27 - LEE + DEBUG CHARLOTTE REAL PROPERTY"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -136,14 +136,6 @@ def buscar_lee(direccion):
 def debug_charlotte(direccion):
     from playwright.sync_api import sync_playwright
 
-    reporte = []
-
-    urls = [
-        "https://www.ccappraiser.com/",
-        "https://www.charlottecpa.com/",
-        "https://www.ccappraiser.com/RPSearchEnter.asp"
-    ]
-
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -153,54 +145,66 @@ def debug_charlotte(direccion):
 
         page = browser.new_page(viewport={"width": 1400, "height": 1200})
 
-        for url in urls:
-            reporte.append("=" * 80)
-            reporte.append(f"PROBANDO URL: {url}")
+        page.goto("https://www.ccappraiser.com/", timeout=60000)
+        page.wait_for_timeout(5000)
 
-            try:
-                page.goto(url, timeout=60000)
-                page.wait_for_timeout(10000)
+        reporte = []
+        reporte.append("=== CHARLOTTE DEBUG REAL PROPERTY ===")
+        reporte.append(f"Dirección recibida: {direccion}")
+        reporte.append(f"URL inicial: {page.url}")
+        reporte.append(f"Título inicial: {page.title()}")
+        reporte.append("")
 
-                reporte.append(f"URL FINAL: {page.url}")
-                reporte.append(f"TÍTULO: {page.title()}")
+        # Click en Real Property
+        try:
+            page.locator("text=Real Property").click(timeout=10000)
+            page.wait_for_timeout(7000)
+            reporte.append("Click en Real Property: OK")
+        except Exception as e:
+            reporte.append("Click en Real Property: FALLÓ")
+            reporte.append(str(e))
 
-                try:
-                    texto = page.locator("body").inner_text(timeout=10000)
-                    reporte.append("")
-                    reporte.append("=== TEXTO ===")
-                    reporte.append(texto[:3000])
-                except Exception as e:
-                    reporte.append(f"No pude leer texto: {e}")
+        reporte.append("")
+        reporte.append(f"URL después del click: {page.url}")
+        reporte.append(f"Título después del click: {page.title()}")
+        reporte.append("")
 
-                try:
-                    elementos = page.evaluate("""
-                    () => {
-                        const els = Array.from(document.querySelectorAll('input, button, select, textarea, a'));
-                        return els.map((el, i) => ({
-                            index: i,
-                            tag: el.tagName,
-                            type: el.getAttribute('type'),
-                            id: el.id,
-                            name: el.getAttribute('name'),
-                            placeholder: el.getAttribute('placeholder'),
-                            value: el.getAttribute('value'),
-                            text: el.innerText,
-                            visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
-                        }));
-                    }
-                    """)
+        # Texto visible
+        try:
+            texto = page.locator("body").inner_text(timeout=10000)
+            reporte.append("=== TEXTO DE LA PÁGINA ===")
+            reporte.append(texto[:4000])
+            reporte.append("")
+        except Exception as e:
+            reporte.append(f"No pude leer texto: {e}")
+            reporte.append("")
 
-                    reporte.append("")
-                    reporte.append("=== ELEMENTOS ===")
-                    for e in elementos[:120]:
-                        reporte.append(str(e))
+        # Inputs y botones
+        try:
+            elementos = page.evaluate("""
+            () => {
+                const els = Array.from(document.querySelectorAll('input, button, select, textarea, a'));
+                return els.map((el, i) => ({
+                    index: i,
+                    tag: el.tagName,
+                    type: el.getAttribute('type'),
+                    id: el.id,
+                    name: el.getAttribute('name'),
+                    placeholder: el.getAttribute('placeholder'),
+                    value: el.getAttribute('value'),
+                    text: el.innerText,
+                    visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+                }));
+            }
+            """)
 
-                except Exception as e:
-                    reporte.append(f"No pude leer elementos: {e}")
+            reporte.append("=== ELEMENTOS DETECTADOS ===")
+            for e in elementos[:150]:
+                reporte.append(str(e))
 
-            except Exception as e:
-                reporte.append(f"ERROR cargando {url}: {e}")
+        except Exception as e:
+            reporte.append(f"No pude leer elementos: {e}")
 
         browser.close()
 
-    return "\n".join(reporte)
+        return "\n".join(reporte)
