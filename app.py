@@ -1,176 +1,141 @@
-from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-import traceback
-import html
-import os
-import re
+from flask import Flask, request, send_file
+from playwright.sync_api import sync_playwright
 import time
-from urllib.parse import urlparse, parse_qs
+import os
 
-app = FastAPI()
+app = Flask(__name__)
 
-VERSION = "VERSION 28 - LEE + DEBUG CHARLOTTE MENU"
+# =========================
+# 🔹 DETECTAR CONDADO
+# =========================
+def detectar_condado(direccion):
+    direccion = direccion.lower()
 
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
+    if "cape coral" in direccion or "fort myers" in direccion:
+        return "lee"
 
+    if "port charlotte" in direccion or "charlotte" in direccion:
+        return "charlotte"
 
-@app.get("/", response_class=HTMLResponse)
-def home():
-    return f"""
-    <h2>Buscar propiedad automático</h2>
-    <p><b>{VERSION}</b></p>
-
-    <form method="post" action="/buscar">
-        Dirección:<br>
-        <input name="direccion" style="width:420px"><br><br>
-        <button type="submit">Buscar</button>
-    </form>
-    """
+    # fallback
+    return "lee"
 
 
-@app.post("/buscar", response_class=HTMLResponse)
-def buscar(direccion: str = Form(...)):
+# =========================
+# 🔹 SEPARAR DIRECCIÓN (Charlotte)
+# =========================
+def separar_direccion(direccion):
+    partes = direccion.strip().split(" ", 1)
+
+    numero = partes[0]
+    calle = partes[1] if len(partes) > 1 else ""
+
+    return numero, calle
+
+
+# =========================
+# 🔹 LEE COUNTY
+# =========================
+def buscar_lee(playwright, direccion):
+    browser = playwright.chromium.launch(headless=True)
+    page = browser.new_page()
+
+    page.goto("https://www.leepa.org/Search/PropertySearch.aspx")
+
+    page.fill("#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressSearch1_txtAddress", direccion)
+    page.click("#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressSearch1_btnSearch")
+
+    page.wait_for_timeout(5000)
+
+    # entrar al primer resultado
+    page.click("a[href*='Details']")
+    page.wait_for_timeout(5000)
+
+    # aceptar condiciones si aparece
     try:
-        try:
-            resultado, pdf_url = buscar_lee(direccion)
+        page.click("text=Continue", timeout=3000)
+    except:
+        pass
 
-            return f"""
-            <h2>Resultado - Lee County</h2>
-            <p><b>{VERSION}</b></p>
-            <p><b>Dirección:</b> {html.escape(direccion)}</p>
-            <p><a href="{pdf_url}" target="_blank" style="font-size:20px;">📄 Descargar PDF</a></p>
-            <hr>
-            <pre>{html.escape(resultado)}</pre>
-            <br><a href="/">Volver</a>
-            """
+    page.wait_for_timeout(3000)
 
-        except Exception:
-            pass
+    pdf_path = f"downloads/lee_{int(time.time())}.pdf"
+    page.pdf(path=pdf_path)
 
-        resultado = debug_charlotte(direccion)
-
-        return f"""
-        <h2>Debug Charlotte County</h2>
-        <p><b>{VERSION}</b></p>
-        <p><b>Dirección:</b> {html.escape(direccion)}</p>
-        <hr>
-        <pre>{html.escape(resultado)}</pre>
-        <br><a href="/">Volver</a>
-        """
-
-    except Exception:
-        error = traceback.format_exc()
-        return f"""
-        <h2>Error interno</h2>
-        <pre>{html.escape(error)}</pre>
-        <a href="/">Volver</a>
-        """
+    browser.close()
+    return pdf_path
 
 
-def limpiar(texto):
-    return re.sub(r"[^a-z0-9]", "_", texto.lower())[:60]
+# =========================
+# 🔹 CHARLOTTE COUNTY
+# =========================
+def buscar_charlotte(playwright, direccion):
+    browser = playwright.chromium.launch(headless=True)
+    page = browser.new_page()
+
+    page.goto("https://www.ccappraiser.com/RPSearchEnter.asp")
+
+    numero, calle = separar_direccion(direccion)
+
+    # llenar campos
+    page.fill('input[name="PropertyAddressNumber"]', numero)
+    page.fill('input[name="PropertyAddressStreet"]', calle)
+
+    # click search
+    page.click('text=Run Search')
+
+    page.wait_for_timeout(6000)
+
+    # entrar al primer resultado
+    try:
+        page.click("a[href*='RPDetail']", timeout=5000)
+    except:
+        pass
+
+    page.wait_for_timeout(5000)
+
+    pdf_path = f"downloads/charlotte_{int(time.time())}.pdf"
+    page.pdf(path=pdf_path)
+
+    browser.close()
+    return pdf_path
 
 
-def buscar_lee(direccion):
-    from playwright.sync_api import sync_playwright
+# =========================
+# 🔹 BUSCADOR PRINCIPAL
+# =========================
+def buscar(direccion):
+    condado = detectar_condado(direccion)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            chromium_sandbox=False,
-            args=["--disable-dev-shm-usage"]
-        )
+    with sync_playwright() as playwright:
 
-        page = browser.new_page(viewport={"width": 1280, "height": 1800})
-        page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
+        if condado == "lee":
+            return buscar_lee(playwright, direccion)
 
-        campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
-        page.wait_for_selector(campo, timeout=30000)
-        page.fill(campo, direccion)
-        page.press(campo, "Enter")
+        if condado == "charlotte":
+            return buscar_charlotte(playwright, direccion)
 
-        page.wait_for_timeout(9000)
-
-        link = page.evaluate("""
-        () => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const parcel = links.find(a =>
-                a.innerText &&
-                a.innerText.toLowerCase().includes('parcel details')
-            );
-            return parcel ? parcel.href : null;
-        }
-        """)
-
-        if not link:
-            raise Exception("Lee no encontró resultados")
-
-        parsed = urlparse(link)
-        folio = parse_qs(parsed.query).get("FolioID", [""])[0]
-
-        if not folio:
-            raise Exception("Lee encontró link, pero no FolioID")
-
-        url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
-        page.goto(url, timeout=60000)
-
-        page.wait_for_timeout(5000)
-
-        try:
-            page.locator("text=Continue").click(timeout=8000)
-            page.wait_for_timeout(8000)
-        except:
-            pass
-
-        nombre = limpiar(direccion) + "_" + folio + "_" + str(int(time.time())) + ".pdf"
-        ruta = os.path.join(DOWNLOAD_DIR, nombre)
-
-        page.pdf(path=ruta, format="Letter", print_background=True)
-
-        browser.close()
-
-        return f"Lee OK\nFolio: {folio}\nURL: {url}", f"/downloads/{nombre}"
+        return buscar_lee(playwright, direccion)
 
 
-def debug_charlotte(direccion):
-    from playwright.sync_api import sync_playwright
+# =========================
+# 🔹 RUTA WEB
+# =========================
+@app.route("/buscar")
+def buscar_route():
+    direccion = request.args.get("direccion")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            chromium_sandbox=False,
-            args=["--disable-dev-shm-usage"]
-        )
+    if not direccion:
+        return "Falta dirección"
 
-        page = browser.new_page(viewport={"width": 1400, "height": 1200})
+    pdf_path = buscar(direccion)
 
-        # 🔥 ENTRAR DIRECTO AL SEARCH (SIN MENÚ)
-        page.goto("https://www.ccappraiser.com/RPSearchEnter.asp", timeout=60000)
-        page.wait_for_timeout(5000)
+    return send_file(pdf_path, as_attachment=True)
 
-        reporte = []
-        reporte.append("=== CHARLOTTE DIRECT SEARCH ===")
-        reporte.append(f"URL: {page.url}\n")
 
-        # 🔍 BUSCAR INPUT
-        inputs = page.evaluate("""
-        () => {
-            return Array.from(document.querySelectorAll('input')).map(i => ({
-                type: i.type,
-                id: i.id,
-                name: i.name,
-                placeholder: i.placeholder
-            }));
-        }
-        """)
-
-        reporte.append("=== INPUTS ===")
-        for i in inputs:
-            reporte.append(str(i))
-
-        browser.close()
-
-        return "\\n".join(reporte)
+# =========================
+# 🔹 MAIN
+# =========================
+if __name__ == "__main__":
+    os.makedirs("downloads", exist_ok=True)
+    app.run(debug=True)
