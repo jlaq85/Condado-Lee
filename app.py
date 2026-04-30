@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 24 - LEE + DEBUG COLLIER MAPS"
+VERSION = "VERSION 25 - LEE + DEBUG HENDRY"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -34,12 +34,14 @@ def home():
 @app.post("/buscar", response_class=HTMLResponse)
 def buscar(direccion: str = Form(...)):
     try:
+        # 🔥 LEE PRIMERO
         try:
             resultado, pdf_url = buscar_lee(direccion)
 
             return f"""
             <h2>Resultado - Lee County</h2>
             <p><b>{VERSION}</b></p>
+
             <p><b>Dirección:</b> {html.escape(direccion)}</p>
 
             <p>
@@ -50,30 +52,33 @@ def buscar(direccion: str = Form(...)):
 
             <hr>
             <pre>{html.escape(resultado)}</pre>
-            <br>
-            <a href="/">Volver</a>
-            """
-
-        except Exception as e:
-            resultado = debug_collier_maps(direccion)
-
-            return f"""
-            <h2>Debug Collier Maps</h2>
-            <p><b>{VERSION}</b></p>
-            <p><b>Dirección:</b> {html.escape(direccion)}</p>
-
-            <hr>
-            <pre>{html.escape(resultado)}</pre>
 
             <br>
             <a href="/">Volver</a>
             """
+        except:
+            pass
+
+        # 🔥 SI FALLA → DEBUG HENDRY
+        resultado = debug_hendry(direccion)
+
+        return f"""
+        <h2>Debug Hendry County</h2>
+        <p><b>{VERSION}</b></p>
+
+        <p><b>Dirección:</b> {html.escape(direccion)}</p>
+
+        <hr>
+        <pre>{html.escape(resultado)}</pre>
+
+        <br>
+        <a href="/">Volver</a>
+        """
 
     except Exception:
         error = traceback.format_exc()
         return f"""
         <h2>Error interno</h2>
-        <p><b>{VERSION}</b></p>
         <pre>{html.escape(error)}</pre>
         <a href="/">Volver</a>
         """
@@ -83,6 +88,7 @@ def limpiar(texto):
     return re.sub(r"[^a-z0-9]", "_", texto.lower())[:60]
 
 
+# ===== LEE =====
 def buscar_lee(direccion):
     from playwright.sync_api import sync_playwright
 
@@ -94,10 +100,10 @@ def buscar_lee(direccion):
         )
 
         page = browser.new_page(viewport={"width": 1280, "height": 1800})
-        page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
+        page.goto("https://www.leepa.org/Search/PropertySearch.aspx")
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
-        page.wait_for_selector(campo, timeout=30000)
+        page.wait_for_selector(campo)
         page.fill(campo, direccion)
         page.press(campo, "Enter")
 
@@ -120,11 +126,8 @@ def buscar_lee(direccion):
         parsed = urlparse(link)
         folio = parse_qs(parsed.query).get("FolioID", [""])[0]
 
-        if not folio:
-            raise Exception("Lee encontró link, pero no FolioID")
-
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
-        page.goto(url, timeout=60000)
+        page.goto(url)
 
         page.wait_for_timeout(5000)
 
@@ -144,7 +147,8 @@ def buscar_lee(direccion):
         return f"Lee OK\nFolio: {folio}\nURL: {url}", f"/downloads/{nombre}"
 
 
-def debug_collier_maps(direccion):
+# ===== DEBUG HENDRY =====
+def debug_hendry(direccion):
     from playwright.sync_api import sync_playwright
 
     reporte = []
@@ -158,25 +162,23 @@ def debug_collier_maps(direccion):
 
         page = browser.new_page(viewport={"width": 1400, "height": 1200})
 
-        url = "https://maps.collierappraiser.com/"
+        url = "https://beacon.schneidercorp.com/Application.aspx?AppID=1105&LayerID=27399&PageID=11144&PageTypeID=2"
         page.goto(url, timeout=60000)
 
-        page.wait_for_timeout(12000)
+        page.wait_for_timeout(10000)
 
-        reporte.append("=== COLLIER MAPS DEBUG ===")
-        reporte.append(f"URL inicial: {url}")
-        reporte.append(f"URL final: {page.url}")
+        reporte.append("=== HENDRY DEBUG ===")
+        reporte.append(f"URL: {page.url}")
         reporte.append(f"Título: {page.title()}")
         reporte.append("")
 
         try:
             texto = page.locator("body").inner_text(timeout=10000)
-            reporte.append("=== TEXTO DE LA PÁGINA ===")
+            reporte.append("=== TEXTO ===")
             reporte.append(texto[:4000])
             reporte.append("")
-        except Exception as e:
-            reporte.append(f"No pude leer texto body: {e}")
-            reporte.append("")
+        except:
+            pass
 
         try:
             elementos = page.evaluate("""
@@ -191,32 +193,17 @@ def debug_collier_maps(direccion):
                     placeholder: el.getAttribute('placeholder'),
                     value: el.getAttribute('value'),
                     text: el.innerText,
-                    aria: el.getAttribute('aria-label'),
-                    title: el.getAttribute('title'),
-                    visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+                    visible: !!(el.offsetWidth || el.offsetHeight)
                 }));
             }
             """)
 
-            reporte.append("=== ELEMENTOS DETECTADOS ===")
+            reporte.append("=== ELEMENTOS ===")
             for e in elementos[:120]:
                 reporte.append(str(e))
 
-        except Exception as e:
-            reporte.append(f"No pude leer elementos: {e}")
-
-        try:
-            nombre = limpiar(direccion) + "_collier_debug_" + str(int(time.time())) + ".pdf"
-            ruta = os.path.join(DOWNLOAD_DIR, nombre)
-
-            page.pdf(path=ruta, format="Letter", print_background=True)
-
-            reporte.append("")
-            reporte.append("=== PDF DEBUG CREADO ===")
-            reporte.append(f"/downloads/{nombre}")
-
-        except Exception as e:
-            reporte.append(f"No pude crear PDF debug: {e}")
+        except:
+            pass
 
         browser.close()
 
