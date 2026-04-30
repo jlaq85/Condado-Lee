@@ -5,7 +5,7 @@ import traceback, html, os, re, time
 from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
-VERSION = "VERSION 33 - FIX VIEWPORT DEEDS"
+VERSION = "VERSION 34 - FIX DEED LOCATOR"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -40,8 +40,10 @@ def buscar(direccion: str = Form(...)):
         <p><b>{VERSION}</b></p>
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
         <p><b>Condado:</b> {condado}</p>
+
         <p><a href="{resultado['parcel_pdf']}" target="_blank" style="font-size:20px;">📄 Descargar Property PDF</a></p>
         <p><a href="{resultado['deed_pdf']}" target="_blank" style="font-size:20px;">📄 Descargar Deed PDF</a></p>
+
         <hr>
         <pre>{html.escape(resultado['reporte'])}</pre>
         <br><a href="/">Volver</a>
@@ -105,6 +107,7 @@ def buscar_lee(direccion):
             chromium_sandbox=False,
             args=["--disable-dev-shm-usage"]
         )
+
         context = browser.new_context()
         page = context.new_page()
         page.set_viewport_size({"width": 1280, "height": 1800})
@@ -120,7 +123,10 @@ def buscar_lee(direccion):
         link = page.evaluate("""
         () => {
             const links = Array.from(document.querySelectorAll('a'));
-            const parcel = links.find(a => a.innerText && a.innerText.toLowerCase().includes('parcel details'));
+            const parcel = links.find(a =>
+                a.innerText &&
+                a.innerText.toLowerCase().includes('parcel details')
+            );
             return parcel ? parcel.href : null;
         }
         """)
@@ -129,6 +135,7 @@ def buscar_lee(direccion):
             raise Exception("Lee no encontró resultados")
 
         folio = parse_qs(urlparse(link).query).get("FolioID", [""])[0]
+
         if not folio:
             raise Exception("Lee encontró link, pero no FolioID")
 
@@ -147,7 +154,8 @@ def buscar_lee(direccion):
             limpiar(direccion) + "_lee_property_" + folio + "_" + str(int(time.time())) + ".pdf"
         )
 
-        deed_link = page.locator("a").filter(has_text=re.compile(r"^\d{10,}$")).first()
+        deed_link = page.locator("a").filter(has_text=re.compile(r"^\d{10,}$")).first
+
         if deed_link.count() == 0:
             raise Exception("No encontré Clerk File Number / Deed en Lee.")
 
@@ -179,6 +187,7 @@ def buscar_charlotte(direccion):
             chromium_sandbox=False,
             args=["--disable-dev-shm-usage"]
         )
+
         context = browser.new_context()
         page = context.new_page()
         page.set_viewport_size({"width": 1400, "height": 1400})
@@ -220,7 +229,11 @@ def buscar_charlotte(direccion):
         parcel_info = page.evaluate("""
         (direccionExacta) => {
             function norm(t) {
-                return (t || "").toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
+                return (t || "")
+                    .toUpperCase()
+                    .replace(/[^A-Z0-9 ]/g, " ")
+                    .replace(/\\s+/g, " ")
+                    .trim();
             }
 
             const rows = Array.from(document.querySelectorAll("tr"));
@@ -230,12 +243,20 @@ def buscar_charlotte(direccion):
                 if (rowText.includes(direccionExacta)) {
                     const link = row.querySelector("a");
                     if (link) {
-                        return {found: true, href: link.href, text: row.innerText};
+                        return {
+                            found: true,
+                            href: link.href,
+                            text: row.innerText
+                        };
                     }
                 }
             }
 
-            return {found: false, href: null, text: document.body.innerText.slice(0, 3000)};
+            return {
+                found: false,
+                href: null,
+                text: document.body.innerText.slice(0, 3000)
+            };
         }
         """, direccion_exacta)
 
@@ -250,7 +271,8 @@ def buscar_charlotte(direccion):
             limpiar(direccion) + "_charlotte_property_" + str(int(time.time())) + ".pdf"
         )
 
-        deed_link = page.locator("a").filter(has_text=re.compile(r"^\d{5,}$")).first()
+        deed_link = page.locator("a").filter(has_text=re.compile(r"^\d{5,}$")).first
+
         if deed_link.count() == 0:
             raise Exception("No encontré Instrument Number / Deed en Charlotte.")
 
