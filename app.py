@@ -1,16 +1,11 @@
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-import traceback
-import html
-import os
-import re
-import time
+import traceback, html, os, re, time
 from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
-
-VERSION = "VERSION 31 - CHARLOTTE CLICK EXACT ADDRESS"
+VERSION = "VERSION 32 - PRO DEEDS LEE + CHARLOTTE"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -20,13 +15,12 @@ app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 @app.get("/", response_class=HTMLResponse)
 def home():
     return f"""
-    <h2>Buscar propiedad automático</h2>
+    <h2>Buscar propiedad + Deed</h2>
     <p><b>{VERSION}</b></p>
-
     <form method="post" action="/buscar">
         Dirección:<br>
         <input name="direccion" style="width:420px"><br><br>
-        <button type="submit">Buscar y crear PDF</button>
+        <button type="submit">Buscar y crear PDFs</button>
     </form>
     """
 
@@ -35,10 +29,10 @@ def home():
 def buscar(direccion: str = Form(...)):
     try:
         try:
-            resultado, pdf_url = buscar_lee(direccion)
+            resultado = buscar_lee(direccion)
             condado = "Lee"
         except Exception:
-            resultado, pdf_url = buscar_charlotte(direccion)
+            resultado = buscar_charlotte(direccion)
             condado = "Charlotte"
 
         return f"""
@@ -47,10 +41,11 @@ def buscar(direccion: str = Form(...)):
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
         <p><b>Condado:</b> {condado}</p>
 
-        <p><a href="{pdf_url}" target="_blank" style="font-size:20px;">📄 Descargar PDF</a></p>
+        <p><a href="{resultado['parcel_pdf']}" target="_blank" style="font-size:20px;">📄 Descargar Property PDF</a></p>
+        <p><a href="{resultado['deed_pdf']}" target="_blank" style="font-size:20px;">📄 Descargar Deed PDF</a></p>
 
         <hr>
-        <pre>{html.escape(resultado)}</pre>
+        <pre>{html.escape(resultado['reporte'])}</pre>
         <br>
         <a href="/">Volver</a>
         """
@@ -83,33 +78,47 @@ def separar_direccion_charlotte(direccion):
     return numero, calle
 
 
+def guardar_pdf(page, nombre):
+    ruta = os.path.join(DOWNLOAD_DIR, nombre)
+    page.pdf(path=ruta, format="Letter", print_background=True)
+    return f"/downloads/{nombre}"
+
+
+def abrir_link_y_guardar_pdf(context, page, link_locator, nombre_pdf):
+    try:
+        with context.expect_page(timeout=10000) as nueva:
+            link_locator.click(timeout=10000)
+        deed_page = nueva.value
+        deed_page.wait_for_timeout(7000)
+    except:
+        link_locator.click(timeout=10000)
+        deed_page = page
+        deed_page.wait_for_timeout(7000)
+
+    pdf_url = guardar_pdf(deed_page, nombre_pdf)
+    return pdf_url, deed_page.url
+
+
 def buscar_lee(direccion):
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            chromium_sandbox=False,
-            args=["--disable-dev-shm-usage"]
-        )
+        browser = p.chromium.launch(headless=True, chromium_sandbox=False, args=["--disable-dev-shm-usage"])
+        context = browser.new_context()
+        page = context.new_page(viewport={"width": 1280, "height": 1800})
 
-        page = browser.new_page(viewport={"width": 1280, "height": 1800})
         page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
         page.wait_for_selector(campo, timeout=30000)
         page.fill(campo, direccion)
         page.press(campo, "Enter")
-
         page.wait_for_timeout(9000)
 
         link = page.evaluate("""
         () => {
             const links = Array.from(document.querySelectorAll('a'));
-            const parcel = links.find(a =>
-                a.innerText &&
-                a.innerText.toLowerCase().includes('parcel details')
-            );
+            const parcel = links.find(a => a.innerText && a.innerText.toLowerCase().includes('parcel details'));
             return parcel ? parcel.href : null;
         }
         """)
@@ -117,16 +126,13 @@ def buscar_lee(direccion):
         if not link:
             raise Exception("Lee no encontró resultados")
 
-        parsed = urlparse(link)
-        folio = parse_qs(parsed.query).get("FolioID", [""])[0]
-
+        folio = parse_qs(urlparse(link).query).get("FolioID", [""])[0]
         if not folio:
             raise Exception("Lee encontró link, pero no FolioID")
 
-        url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
-        page.goto(url, timeout=60000)
-
-        page.wait_for_timeout(5000)
+        parcel_url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}&SalesDetails=True#SalesDetails"
+        page.goto(parcel_url, timeout=60000)
+        page.wait_for_timeout(6000)
 
         try:
             page.locator("text=Continue").click(timeout=8000)
@@ -134,14 +140,23 @@ def buscar_lee(direccion):
         except:
             pass
 
-        nombre = limpiar(direccion) + "_lee_" + folio + "_" + str(int(time.time())) + ".pdf"
-        ruta = os.path.join(DOWNLOAD_DIR, nombre)
+        parcel_pdf_name = limpiar(direccion) + "_lee_property_" + folio + "_" + str(int(time.time())) + ".pdf"
+        parcel_pdf = guardar_pdf(page, parcel_pdf_name)
 
-        page.pdf(path=ruta, format="Letter", print_background=True)
+        deed_link = page.locator("a").filter(has_text=re.compile(r"^\d{10,}$")).first()
+        if deed_link.count() == 0:
+            raise Exception("No encontré Clerk File Number / Deed en Lee.")
+
+        deed_pdf_name = limpiar(direccion) + "_lee_deed_" + str(int(time.time())) + ".pdf"
+        deed_pdf, deed_url = abrir_link_y_guardar_pdf(context, page, deed_link, deed_pdf_name)
 
         browser.close()
 
-        return f"Lee OK\nFolio: {folio}\nURL: {url}", f"/downloads/{nombre}"
+        return {
+            "parcel_pdf": parcel_pdf,
+            "deed_pdf": deed_pdf,
+            "reporte": f"Lee OK\nFolio: {folio}\nParcel URL: {parcel_url}\nDeed URL: {deed_url}"
+        }
 
 
 def buscar_charlotte(direccion):
@@ -151,13 +166,9 @@ def buscar_charlotte(direccion):
     direccion_exacta = normalizar_direccion(direccion)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            chromium_sandbox=False,
-            args=["--disable-dev-shm-usage"]
-        )
-
-        page = browser.new_page(viewport={"width": 1400, "height": 1400})
+        browser = p.chromium.launch(headless=True, chromium_sandbox=False, args=["--disable-dev-shm-usage"])
+        context = browser.new_context()
+        page = context.new_page(viewport={"width": 1400, "height": 1400})
 
         page.goto("https://www.ccappraiser.com/RPSearchEnter.asp", timeout=60000)
         page.wait_for_timeout(5000)
@@ -189,72 +200,52 @@ def buscar_charlotte(direccion):
         try:
             page.click('input[value*="Run Search"]', timeout=10000)
         except:
-            try:
-                page.click('button:has-text("Run Search")', timeout=10000)
-            except:
-                page.locator("text=Run Search").click(timeout=10000)
+            page.locator("text=Run Search").click(timeout=10000)
 
         page.wait_for_timeout(9000)
 
-        # Buscar la fila cuya dirección coincida exactamente con la dirección dada
         parcel_info = page.evaluate("""
         (direccionExacta) => {
             function norm(t) {
-                return (t || "")
-                    .toUpperCase()
-                    .replace(/[^A-Z0-9 ]/g, " ")
-                    .replace(/\\s+/g, " ")
-                    .trim();
+                return (t || "").toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
             }
 
             const rows = Array.from(document.querySelectorAll("tr"));
 
             for (const row of rows) {
                 const rowText = norm(row.innerText);
-
                 if (rowText.includes(direccionExacta)) {
                     const link = row.querySelector("a");
                     if (link) {
-                        return {
-                            found: true,
-                            href: link.href,
-                            text: row.innerText
-                        };
+                        return {found: true, href: link.href, text: row.innerText};
                     }
                 }
             }
 
-            return {
-                found: false,
-                href: null,
-                text: document.body.innerText.slice(0, 3000)
-            };
+            return {found: false, href: null, text: document.body.innerText.slice(0, 3000)};
         }
         """, direccion_exacta)
 
-        if not parcel_info["found"] or not parcel_info["href"]:
-            raise Exception(
-                "No pude encontrar una parcela con la dirección exacta: "
-                + direccion_exacta
-                + "\\n\\nTexto de resultados:\\n"
-                + parcel_info["text"]
-            )
+        if not parcel_info["found"]:
+            raise Exception("No encontré parcela exacta en Charlotte.")
 
         page.goto(parcel_info["href"], timeout=60000)
         page.wait_for_timeout(7000)
 
-        nombre = limpiar(direccion) + "_charlotte_detail_" + str(int(time.time())) + ".pdf"
-        ruta = os.path.join(DOWNLOAD_DIR, nombre)
+        parcel_pdf_name = limpiar(direccion) + "_charlotte_property_" + str(int(time.time())) + ".pdf"
+        parcel_pdf = guardar_pdf(page, parcel_pdf_name)
 
-        page.pdf(path=ruta, format="Letter", print_background=True)
+        deed_link = page.locator("a").filter(has_text=re.compile(r"^\d{5,}$")).first()
+        if deed_link.count() == 0:
+            raise Exception("No encontré Instrument Number / Deed en Charlotte.")
+
+        deed_pdf_name = limpiar(direccion) + "_charlotte_deed_" + str(int(time.time())) + ".pdf"
+        deed_pdf, deed_url = abrir_link_y_guardar_pdf(context, page, deed_link, deed_pdf_name)
 
         browser.close()
 
-        return (
-            "Charlotte OK\n"
-            f"Número: {numero}\n"
-            f"Calle: {calle}\n"
-            f"Dirección exacta buscada: {direccion_exacta}\n\n"
-            f"Fila encontrada:\n{parcel_info['text']}\n\n"
-            f"URL abierta:\n{parcel_info['href']}"
-        ), f"/downloads/{nombre}"
+        return {
+            "parcel_pdf": parcel_pdf,
+            "deed_pdf": deed_pdf,
+            "reporte": f"Charlotte OK\nNúmero: {numero}\nCalle: {calle}\nParcel URL: {parcel_info['href']}\nDeed URL: {deed_url}"
+        }
