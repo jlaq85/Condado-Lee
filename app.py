@@ -147,67 +147,30 @@ def debug_charlotte(direccion):
 
         page = browser.new_page(viewport={"width": 1400, "height": 1200})
 
-        page.goto("https://www.ccappraiser.com/", timeout=60000)
+        # 🔥 ENTRAR DIRECTO AL SEARCH (SIN MENÚ)
+        page.goto("https://www.ccappraiser.com/RPSearchEnter.asp", timeout=60000)
         page.wait_for_timeout(5000)
 
         reporte = []
-        reporte.append("=== CHARLOTTE DEBUG MENU ===")
-        reporte.append(f"Dirección recibida: {direccion}")
-        reporte.append(f"URL inicial: {page.url}")
-        reporte.append(f"Título inicial: {page.title()}")
-        reporte.append("")
+        reporte.append("=== CHARLOTTE DIRECT SEARCH ===")
+        reporte.append(f"URL: {page.url}\n")
 
-        try:
-            page.locator("text=Real Property").first.hover(timeout=10000)
-            page.wait_for_timeout(2000)
+        # 🔍 BUSCAR INPUT
+        inputs = page.evaluate("""
+        () => {
+            return Array.from(document.querySelectorAll('input')).map(i => ({
+                type: i.type,
+                id: i.id,
+                name: i.name,
+                placeholder: i.placeholder
+            }));
+        }
+        """)
 
-            page.locator("text=Real Property").nth(1).click(timeout=10000)
-            page.wait_for_timeout(7000)
-
-            reporte.append("Navegación menú Real Property: OK")
-        except Exception as e:
-            reporte.append("Navegación menú Real Property: FALLÓ")
-            reporte.append(str(e))
-
-        reporte.append("")
-        reporte.append(f"URL final: {page.url}")
-        reporte.append(f"Título final: {page.title()}")
-        reporte.append("")
-
-        try:
-            texto = page.locator("body").inner_text(timeout=10000)
-            reporte.append("=== TEXTO DE LA PÁGINA ===")
-            reporte.append(texto[:4000])
-            reporte.append("")
-        except Exception as e:
-            reporte.append(f"No pude leer texto: {e}")
-            reporte.append("")
-
-        try:
-            elementos = page.evaluate("""
-            () => {
-                const els = Array.from(document.querySelectorAll('input, button, select, textarea, a'));
-                return els.map((el, i) => ({
-                    index: i,
-                    tag: el.tagName,
-                    type: el.getAttribute('type'),
-                    id: el.id,
-                    name: el.getAttribute('name'),
-                    placeholder: el.getAttribute('placeholder'),
-                    value: el.getAttribute('value'),
-                    text: el.innerText,
-                    visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
-                }));
-            }
-            """)
-
-            reporte.append("=== ELEMENTOS DETECTADOS ===")
-            for e in elementos[:180]:
-                reporte.append(str(e))
-
-        except Exception as e:
-            reporte.append(f"No pude leer elementos: {e}")
+        reporte.append("=== INPUTS ===")
+        for i in inputs:
+            reporte.append(str(i))
 
         browser.close()
 
-        return "\n".join(reporte)
+        return "\\n".join(reporte)
