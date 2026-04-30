@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 29 - FASTAPI LEE + CHARLOTTE"
+VERSION = "VERSION 30 - FASTAPI LEE + CHARLOTTE FIX STREET"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -47,11 +47,7 @@ def buscar(direccion: str = Form(...)):
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
         <p><b>Condado:</b> {condado}</p>
 
-        <p>
-            <a href="{pdf_url}" target="_blank" style="font-size:20px;">
-                📄 Descargar PDF
-            </a>
-        </p>
+        <p><a href="{pdf_url}" target="_blank" style="font-size:20px;">📄 Descargar PDF</a></p>
 
         <hr>
         <pre>{html.escape(resultado)}</pre>
@@ -156,14 +152,51 @@ def buscar_charlotte(direccion):
         page = browser.new_page(viewport={"width": 1400, "height": 1400})
 
         page.goto("https://www.ccappraiser.com/RPSearchEnter.asp", timeout=60000)
-        page.wait_for_timeout(4000)
+        page.wait_for_timeout(5000)
 
         page.fill('input[name="PropertyAddressNumber"]', numero)
-        page.fill('input[name="PropertyAddressStreet"]', calle)
 
-        page.click('input[type="submit"], button:has-text("Run Search"), input[value*="Run Search"]')
+        # Detectar automáticamente el campo de nombre de calle
+        campo_calle = page.evaluate("""
+        () => {
+            const inputs = Array.from(document.querySelectorAll('input'));
+            const match = inputs.find(i => {
+                const id = (i.id || '').toLowerCase();
+                const name = (i.name || '').toLowerCase();
+                return (
+                    (id.includes('propertyaddress') || name.includes('propertyaddress')) &&
+                    !id.includes('number') &&
+                    !name.includes('number') &&
+                    i.type !== 'hidden'
+                );
+            });
+            return match ? (match.name || match.id) : null;
+        }
+        """)
 
-        page.wait_for_timeout(8000)
+        if not campo_calle:
+            inputs = page.evaluate("""
+            () => Array.from(document.querySelectorAll('input')).map(i => ({
+                type: i.type,
+                id: i.id,
+                name: i.name,
+                value: i.value
+            }))
+            """)
+            raise Exception("No pude detectar campo de calle en Charlotte. Inputs: " + str(inputs))
+
+        page.fill(f'input[name="{campo_calle}"]', calle)
+
+        # Click en Run Search
+        try:
+            page.click('input[value*="Run Search"]', timeout=10000)
+        except:
+            try:
+                page.click('button:has-text("Run Search")', timeout=10000)
+            except:
+                page.locator("text=Run Search").click(timeout=10000)
+
+        page.wait_for_timeout(9000)
 
         nombre = limpiar(direccion) + "_charlotte_" + str(int(time.time())) + ".pdf"
         ruta = os.path.join(DOWNLOAD_DIR, nombre)
@@ -172,4 +205,4 @@ def buscar_charlotte(direccion):
 
         browser.close()
 
-        return f"Charlotte OK\nNúmero: {numero}\nCalle: {calle}", f"/downloads/{nombre}"
+        return f"Charlotte OK\nNúmero: {numero}\nCalle: {calle}\nCampo calle usado: {campo_calle}", f"/downloads/{nombre}"
