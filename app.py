@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 25 - LEE + DEBUG HENDRY"
+VERSION = "VERSION 26 - LEE + DEBUG CHARLOTTE"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -34,45 +34,29 @@ def home():
 @app.post("/buscar", response_class=HTMLResponse)
 def buscar(direccion: str = Form(...)):
     try:
-        # 🔥 LEE PRIMERO
         try:
             resultado, pdf_url = buscar_lee(direccion)
-
             return f"""
             <h2>Resultado - Lee County</h2>
             <p><b>{VERSION}</b></p>
-
             <p><b>Dirección:</b> {html.escape(direccion)}</p>
-
-            <p>
-                <a href="{pdf_url}" target="_blank" style="font-size:20px;">
-                    📄 Descargar PDF
-                </a>
-            </p>
-
+            <p><a href="{pdf_url}" target="_blank" style="font-size:20px;">📄 Descargar PDF</a></p>
             <hr>
             <pre>{html.escape(resultado)}</pre>
-
-            <br>
-            <a href="/">Volver</a>
+            <br><a href="/">Volver</a>
             """
-        except:
+        except Exception:
             pass
 
-        # 🔥 SI FALLA → DEBUG HENDRY
-        resultado = debug_hendry(direccion)
+        resultado = debug_charlotte(direccion)
 
         return f"""
-        <h2>Debug Hendry County</h2>
+        <h2>Debug Charlotte County</h2>
         <p><b>{VERSION}</b></p>
-
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
-
         <hr>
         <pre>{html.escape(resultado)}</pre>
-
-        <br>
-        <a href="/">Volver</a>
+        <br><a href="/">Volver</a>
         """
 
     except Exception:
@@ -88,7 +72,6 @@ def limpiar(texto):
     return re.sub(r"[^a-z0-9]", "_", texto.lower())[:60]
 
 
-# ===== LEE =====
 def buscar_lee(direccion):
     from playwright.sync_api import sync_playwright
 
@@ -100,10 +83,10 @@ def buscar_lee(direccion):
         )
 
         page = browser.new_page(viewport={"width": 1280, "height": 1800})
-        page.goto("https://www.leepa.org/Search/PropertySearch.aspx")
+        page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
 
         campo = "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_AddressTextBox"
-        page.wait_for_selector(campo)
+        page.wait_for_selector(campo, timeout=30000)
         page.fill(campo, direccion)
         page.press(campo, "Enter")
 
@@ -126,8 +109,11 @@ def buscar_lee(direccion):
         parsed = urlparse(link)
         folio = parse_qs(parsed.query).get("FolioID", [""])[0]
 
+        if not folio:
+            raise Exception("Lee encontró link, pero no FolioID")
+
         url = f"https://www.leepa.org/Display/DisplayParcel.aspx?FolioID={folio}"
-        page.goto(url)
+        page.goto(url, timeout=60000)
 
         page.wait_for_timeout(5000)
 
@@ -147,11 +133,16 @@ def buscar_lee(direccion):
         return f"Lee OK\nFolio: {folio}\nURL: {url}", f"/downloads/{nombre}"
 
 
-# ===== DEBUG HENDRY =====
-def debug_hendry(direccion):
+def debug_charlotte(direccion):
     from playwright.sync_api import sync_playwright
 
     reporte = []
+
+    urls = [
+        "https://www.ccappraiser.com/",
+        "https://www.charlottecpa.com/",
+        "https://www.ccappraiser.com/RPSearchEnter.asp"
+    ]
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -162,48 +153,53 @@ def debug_hendry(direccion):
 
         page = browser.new_page(viewport={"width": 1400, "height": 1200})
 
-        url = "https://beacon.schneidercorp.com/Application.aspx?AppID=1105&LayerID=27399&PageID=11144&PageTypeID=2"
-        page.goto(url, timeout=60000)
+        for url in urls:
+            reporte.append("=" * 80)
+            reporte.append(f"PROBANDO URL: {url}")
 
-        page.wait_for_timeout(10000)
+            try:
+                page.goto(url, timeout=60000)
+                page.wait_for_timeout(10000)
 
-        reporte.append("=== HENDRY DEBUG ===")
-        reporte.append(f"URL: {page.url}")
-        reporte.append(f"Título: {page.title()}")
-        reporte.append("")
+                reporte.append(f"URL FINAL: {page.url}")
+                reporte.append(f"TÍTULO: {page.title()}")
 
-        try:
-            texto = page.locator("body").inner_text(timeout=10000)
-            reporte.append("=== TEXTO ===")
-            reporte.append(texto[:4000])
-            reporte.append("")
-        except:
-            pass
+                try:
+                    texto = page.locator("body").inner_text(timeout=10000)
+                    reporte.append("")
+                    reporte.append("=== TEXTO ===")
+                    reporte.append(texto[:3000])
+                except Exception as e:
+                    reporte.append(f"No pude leer texto: {e}")
 
-        try:
-            elementos = page.evaluate("""
-            () => {
-                const els = Array.from(document.querySelectorAll('input, button, select, textarea, a'));
-                return els.map((el, i) => ({
-                    index: i,
-                    tag: el.tagName,
-                    type: el.getAttribute('type'),
-                    id: el.id,
-                    name: el.getAttribute('name'),
-                    placeholder: el.getAttribute('placeholder'),
-                    value: el.getAttribute('value'),
-                    text: el.innerText,
-                    visible: !!(el.offsetWidth || el.offsetHeight)
-                }));
-            }
-            """)
+                try:
+                    elementos = page.evaluate("""
+                    () => {
+                        const els = Array.from(document.querySelectorAll('input, button, select, textarea, a'));
+                        return els.map((el, i) => ({
+                            index: i,
+                            tag: el.tagName,
+                            type: el.getAttribute('type'),
+                            id: el.id,
+                            name: el.getAttribute('name'),
+                            placeholder: el.getAttribute('placeholder'),
+                            value: el.getAttribute('value'),
+                            text: el.innerText,
+                            visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+                        }));
+                    }
+                    """)
 
-            reporte.append("=== ELEMENTOS ===")
-            for e in elementos[:120]:
-                reporte.append(str(e))
+                    reporte.append("")
+                    reporte.append("=== ELEMENTOS ===")
+                    for e in elementos[:120]:
+                        reporte.append(str(e))
 
-        except:
-            pass
+                except Exception as e:
+                    reporte.append(f"No pude leer elementos: {e}")
+
+            except Exception as e:
+                reporte.append(f"ERROR cargando {url}: {e}")
 
         browser.close()
 
