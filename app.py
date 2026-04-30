@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 30 - FASTAPI LEE + CHARLOTTE FIX STREET"
+VERSION = "VERSION 31 - CHARLOTTE CLICK EXACT ADDRESS"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -67,6 +67,13 @@ def buscar(direccion: str = Form(...)):
 
 def limpiar(texto):
     return re.sub(r"[^a-z0-9]", "_", texto.lower())[:60]
+
+
+def normalizar_direccion(texto):
+    texto = texto.upper().strip()
+    texto = re.sub(r"[^A-Z0-9 ]", " ", texto)
+    texto = re.sub(r"\s+", " ", texto)
+    return texto
 
 
 def separar_direccion_charlotte(direccion):
@@ -141,6 +148,7 @@ def buscar_charlotte(direccion):
     from playwright.sync_api import sync_playwright
 
     numero, calle = separar_direccion_charlotte(direccion)
+    direccion_exacta = normalizar_direccion(direccion)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -156,7 +164,6 @@ def buscar_charlotte(direccion):
 
         page.fill('input[name="PropertyAddressNumber"]', numero)
 
-        # Detectar automáticamente el campo de nombre de calle
         campo_calle = page.evaluate("""
         () => {
             const inputs = Array.from(document.querySelectorAll('input'));
@@ -175,19 +182,10 @@ def buscar_charlotte(direccion):
         """)
 
         if not campo_calle:
-            inputs = page.evaluate("""
-            () => Array.from(document.querySelectorAll('input')).map(i => ({
-                type: i.type,
-                id: i.id,
-                name: i.name,
-                value: i.value
-            }))
-            """)
-            raise Exception("No pude detectar campo de calle en Charlotte. Inputs: " + str(inputs))
+            raise Exception("No pude detectar campo de calle en Charlotte.")
 
         page.fill(f'input[name="{campo_calle}"]', calle)
 
-        # Click en Run Search
         try:
             page.click('input[value*="Run Search"]', timeout=10000)
         except:
@@ -198,11 +196,65 @@ def buscar_charlotte(direccion):
 
         page.wait_for_timeout(9000)
 
-        nombre = limpiar(direccion) + "_charlotte_" + str(int(time.time())) + ".pdf"
+        # Buscar la fila cuya dirección coincida exactamente con la dirección dada
+        parcel_info = page.evaluate("""
+        (direccionExacta) => {
+            function norm(t) {
+                return (t || "")
+                    .toUpperCase()
+                    .replace(/[^A-Z0-9 ]/g, " ")
+                    .replace(/\\s+/g, " ")
+                    .trim();
+            }
+
+            const rows = Array.from(document.querySelectorAll("tr"));
+
+            for (const row of rows) {
+                const rowText = norm(row.innerText);
+
+                if (rowText.includes(direccionExacta)) {
+                    const link = row.querySelector("a");
+                    if (link) {
+                        return {
+                            found: true,
+                            href: link.href,
+                            text: row.innerText
+                        };
+                    }
+                }
+            }
+
+            return {
+                found: false,
+                href: null,
+                text: document.body.innerText.slice(0, 3000)
+            };
+        }
+        """, direccion_exacta)
+
+        if not parcel_info["found"] or not parcel_info["href"]:
+            raise Exception(
+                "No pude encontrar una parcela con la dirección exacta: "
+                + direccion_exacta
+                + "\\n\\nTexto de resultados:\\n"
+                + parcel_info["text"]
+            )
+
+        page.goto(parcel_info["href"], timeout=60000)
+        page.wait_for_timeout(7000)
+
+        nombre = limpiar(direccion) + "_charlotte_detail_" + str(int(time.time())) + ".pdf"
         ruta = os.path.join(DOWNLOAD_DIR, nombre)
 
         page.pdf(path=ruta, format="Letter", print_background=True)
 
         browser.close()
 
-        return f"Charlotte OK\nNúmero: {numero}\nCalle: {calle}\nCampo calle usado: {campo_calle}", f"/downloads/{nombre}"
+        return (
+            "Charlotte OK\n"
+            f"Número: {numero}\n"
+            f"Calle: {calle}\n"
+            f"Dirección exacta buscada: {direccion_exacta}\n\n"
+            f"Fila encontrada:\n{parcel_info['text']}\n\n"
+            f"URL abierta:\n{parcel_info['href']}"
+        ), f"/downloads/{nombre}"
