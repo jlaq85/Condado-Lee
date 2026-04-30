@@ -5,7 +5,7 @@ import traceback, html, os, re, time
 from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
-VERSION = "VERSION 32 - PRO DEEDS LEE + CHARLOTTE"
+VERSION = "VERSION 33 - FIX VIEWPORT DEEDS"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -40,14 +40,11 @@ def buscar(direccion: str = Form(...)):
         <p><b>{VERSION}</b></p>
         <p><b>Dirección:</b> {html.escape(direccion)}</p>
         <p><b>Condado:</b> {condado}</p>
-
         <p><a href="{resultado['parcel_pdf']}" target="_blank" style="font-size:20px;">📄 Descargar Property PDF</a></p>
         <p><a href="{resultado['deed_pdf']}" target="_blank" style="font-size:20px;">📄 Descargar Deed PDF</a></p>
-
         <hr>
         <pre>{html.escape(resultado['reporte'])}</pre>
-        <br>
-        <a href="/">Volver</a>
+        <br><a href="/">Volver</a>
         """
 
     except Exception:
@@ -103,9 +100,14 @@ def buscar_lee(direccion):
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, chromium_sandbox=False, args=["--disable-dev-shm-usage"])
+        browser = p.chromium.launch(
+            headless=True,
+            chromium_sandbox=False,
+            args=["--disable-dev-shm-usage"]
+        )
         context = browser.new_context()
-        page = context.new_page(viewport={"width": 1280, "height": 1800})
+        page = context.new_page()
+        page.set_viewport_size({"width": 1280, "height": 1800})
 
         page.goto("https://www.leepa.org/Search/PropertySearch.aspx", timeout=60000)
 
@@ -140,15 +142,21 @@ def buscar_lee(direccion):
         except:
             pass
 
-        parcel_pdf_name = limpiar(direccion) + "_lee_property_" + folio + "_" + str(int(time.time())) + ".pdf"
-        parcel_pdf = guardar_pdf(page, parcel_pdf_name)
+        parcel_pdf = guardar_pdf(
+            page,
+            limpiar(direccion) + "_lee_property_" + folio + "_" + str(int(time.time())) + ".pdf"
+        )
 
         deed_link = page.locator("a").filter(has_text=re.compile(r"^\d{10,}$")).first()
         if deed_link.count() == 0:
             raise Exception("No encontré Clerk File Number / Deed en Lee.")
 
-        deed_pdf_name = limpiar(direccion) + "_lee_deed_" + str(int(time.time())) + ".pdf"
-        deed_pdf, deed_url = abrir_link_y_guardar_pdf(context, page, deed_link, deed_pdf_name)
+        deed_pdf, deed_url = abrir_link_y_guardar_pdf(
+            context,
+            page,
+            deed_link,
+            limpiar(direccion) + "_lee_deed_" + str(int(time.time())) + ".pdf"
+        )
 
         browser.close()
 
@@ -166,9 +174,14 @@ def buscar_charlotte(direccion):
     direccion_exacta = normalizar_direccion(direccion)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, chromium_sandbox=False, args=["--disable-dev-shm-usage"])
+        browser = p.chromium.launch(
+            headless=True,
+            chromium_sandbox=False,
+            args=["--disable-dev-shm-usage"]
+        )
         context = browser.new_context()
-        page = context.new_page(viewport={"width": 1400, "height": 1400})
+        page = context.new_page()
+        page.set_viewport_size({"width": 1400, "height": 1400})
 
         page.goto("https://www.ccappraiser.com/RPSearchEnter.asp", timeout=60000)
         page.wait_for_timeout(5000)
@@ -232,15 +245,21 @@ def buscar_charlotte(direccion):
         page.goto(parcel_info["href"], timeout=60000)
         page.wait_for_timeout(7000)
 
-        parcel_pdf_name = limpiar(direccion) + "_charlotte_property_" + str(int(time.time())) + ".pdf"
-        parcel_pdf = guardar_pdf(page, parcel_pdf_name)
+        parcel_pdf = guardar_pdf(
+            page,
+            limpiar(direccion) + "_charlotte_property_" + str(int(time.time())) + ".pdf"
+        )
 
         deed_link = page.locator("a").filter(has_text=re.compile(r"^\d{5,}$")).first()
         if deed_link.count() == 0:
             raise Exception("No encontré Instrument Number / Deed en Charlotte.")
 
-        deed_pdf_name = limpiar(direccion) + "_charlotte_deed_" + str(int(time.time())) + ".pdf"
-        deed_pdf, deed_url = abrir_link_y_guardar_pdf(context, page, deed_link, deed_pdf_name)
+        deed_pdf, deed_url = abrir_link_y_guardar_pdf(
+            context,
+            page,
+            deed_link,
+            limpiar(direccion) + "_charlotte_deed_" + str(int(time.time())) + ".pdf"
+        )
 
         browser.close()
 
