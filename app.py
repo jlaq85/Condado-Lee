@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 app = FastAPI()
 
-VERSION = "VERSION 27 - LEE + DEBUG CHARLOTTE REAL PROPERTY"
+VERSION = "VERSION 28 - LEE + DEBUG CHARLOTTE MENU"
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -36,6 +36,7 @@ def buscar(direccion: str = Form(...)):
     try:
         try:
             resultado, pdf_url = buscar_lee(direccion)
+
             return f"""
             <h2>Resultado - Lee County</h2>
             <p><b>{VERSION}</b></p>
@@ -45,6 +46,7 @@ def buscar(direccion: str = Form(...)):
             <pre>{html.escape(resultado)}</pre>
             <br><a href="/">Volver</a>
             """
+
         except Exception:
             pass
 
@@ -149,27 +151,29 @@ def debug_charlotte(direccion):
         page.wait_for_timeout(5000)
 
         reporte = []
-        reporte.append("=== CHARLOTTE DEBUG REAL PROPERTY ===")
+        reporte.append("=== CHARLOTTE DEBUG MENU ===")
         reporte.append(f"Dirección recibida: {direccion}")
         reporte.append(f"URL inicial: {page.url}")
         reporte.append(f"Título inicial: {page.title()}")
         reporte.append("")
 
-        # Click en Real Property
         try:
-            page.locator("text=Real Property").click(timeout=10000)
+            page.locator("text=Real Property").first.hover(timeout=10000)
+            page.wait_for_timeout(2000)
+
+            page.locator("text=Real Property").nth(1).click(timeout=10000)
             page.wait_for_timeout(7000)
-            reporte.append("Click en Real Property: OK")
+
+            reporte.append("Navegación menú Real Property: OK")
         except Exception as e:
-            reporte.append("Click en Real Property: FALLÓ")
+            reporte.append("Navegación menú Real Property: FALLÓ")
             reporte.append(str(e))
 
         reporte.append("")
-        reporte.append(f"URL después del click: {page.url}")
-        reporte.append(f"Título después del click: {page.title()}")
+        reporte.append(f"URL final: {page.url}")
+        reporte.append(f"Título final: {page.title()}")
         reporte.append("")
 
-        # Texto visible
         try:
             texto = page.locator("body").inner_text(timeout=10000)
             reporte.append("=== TEXTO DE LA PÁGINA ===")
@@ -179,7 +183,6 @@ def debug_charlotte(direccion):
             reporte.append(f"No pude leer texto: {e}")
             reporte.append("")
 
-        # Inputs y botones
         try:
             elementos = page.evaluate("""
             () => {
@@ -199,7 +202,7 @@ def debug_charlotte(direccion):
             """)
 
             reporte.append("=== ELEMENTOS DETECTADOS ===")
-            for e in elementos[:150]:
+            for e in elementos[:180]:
                 reporte.append(str(e))
 
         except Exception as e:
